@@ -1,5 +1,8 @@
 use getset::Getters;
-use godot::{classes::Button, prelude::*};
+use godot::{
+    classes::{Button, DisplayServer, Input},
+    prelude::*,
+};
 
 use crate::ui_manager::UiManager;
 
@@ -103,7 +106,7 @@ impl GameState {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_accel() -> Vector3 {
-    Vector3::ZERO
+    Input::singleton().get_accelerometer()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -113,7 +116,11 @@ fn browser_accel() -> Vector3 {
 
 #[cfg(target_arch = "wasm32")]
 fn is_mobile_web() -> bool {
-    false
+    let has_touch = DisplayServer::singleton().is_touchscreen_available();
+    let window_size = DisplayServer::singleton().window_get_size();
+    let is_narrow = window_size.x <= 1024;
+
+    has_touch || is_narrow
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -41,26 +41,29 @@ offset_right = 160.0
 offset_bottom = 84.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 16
 
 [node name="Username" type="LineEdit" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=74195061]
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(320, 48)
+custom_minimum_size = Vector2(360, 60)
+theme_override_font_sizes/font_size = 24
 placeholder_text = "Username"
 alignment = 1
 
 [node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=547072341]
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(320, 48)
+custom_minimum_size = Vector2(360, 60)
+theme_override_font_sizes/font_size = 24
 placeholder_text = "Lobby Code"
 alignment = 1
 
 [node name="Join" type="Button" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=477241338]
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(320, 52)
+custom_minimum_size = Vector2(360, 68)
+theme_override_font_sizes/font_size = 24
 text = "Join Lobby"
 
 [node name="Desktop" type="Control" parent="CenterContainer/VBoxContainer" unique_id=1966833876]

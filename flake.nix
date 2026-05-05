@@ -123,6 +123,7 @@
             emscripten
             python3
             godot_4
+            caddy
           ];
 
           env = {

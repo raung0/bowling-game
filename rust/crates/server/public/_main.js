@@ -3,8 +3,7 @@ window.godotMotion = {
 	supported: "DeviceMotionEvent" in window,
 	active: false,
 
-	is_mobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-	           (navigator.maxTouchPoints > 1 && window.innerWidth < 1024),
+	is_mobile: false,
 
 	async start() {
 		if (!this.supported) return false;
@@ -27,3 +26,20 @@ window.godotMotion = {
 		return true;
 	}
 };
+
+function detectMobileDevice() {
+	const ua = navigator.userAgent || "";
+	const mobileUa = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(ua);
+	const coarsePointer = window.matchMedia ? window.matchMedia("(pointer: coarse)").matches : false;
+	const touchCapable = (navigator.maxTouchPoints || 0) > 1;
+
+	return mobileUa || coarsePointer || touchCapable;
+}
+
+function updateMobileFlag() {
+	window.godotMotion.is_mobile = detectMobileDevice();
+}
+
+updateMobileFlag();
+window.addEventListener("resize", updateMobileFlag);
+window.addEventListener("orientationchange", updateMobileFlag);
