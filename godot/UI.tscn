@@ -1,9 +1,83 @@
 [gd_scene format=3 uid="uid://dy3wsajldrccu"]
 
-[node name="Ui" type="Control" unique_id=1109749756]
-layout_mode = 3
+[node name="UiManager" type="UiManager" unique_id=2042015992]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="CenterContainer" type="CenterContainer" parent="." unique_id=1440770247]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer" unique_id=1121172606]
+layout_mode = 2
+
+[node name="Mobile" type="Control" parent="CenterContainer/VBoxContainer" unique_id=585124077]
+layout_mode = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/Mobile" unique_id=1121476809]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -50.5
+offset_top = -50.5
+offset_right = 50.5
+offset_bottom = 50.5
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Username" type="LineEdit" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=74195061]
+layout_mode = 2
+placeholder_text = "Username"
+alignment = 1
+
+[node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=547072341]
+layout_mode = 2
+placeholder_text = "Lobby Code"
+alignment = 1
+
+[node name="Join" type="Button" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=477241338]
+layout_mode = 2
+text = "Join Lobby"
+
+[node name="Desktop" type="Control" parent="CenterContainer/VBoxContainer" unique_id=1966833876]
+layout_mode = 2
+size_flags_horizontal = 4
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/Desktop" unique_id=853358637]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -53.0
+offset_top = -20.0
+offset_right = 53.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Create" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=702747589]
+layout_mode = 2
+text = "Create lobby"
+
+[node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=328286286]
+layout_mode = 2
+placeholder_text = "Lobby Code"
+alignment = 1
+
+[node name="Spectate" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=1587907184]
+layout_mode = 2
+text = "Spectate Lobby"

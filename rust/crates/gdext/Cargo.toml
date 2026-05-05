@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 ewebsock = "0.8"
 wasm-bindgen = "0.2"
+getset = "0.1"
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "emscripten")))'.dependencies.godot]
 git = "https://github.com/godot-rust/gdext"
