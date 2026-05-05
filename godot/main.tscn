@@ -5,7 +5,9 @@
 
 [node name="GameState" type="GameState" unique_id=99481752]
 
-[node name="WebBridge" type="Node" parent="."]
+[node name="Content" type="Node" parent="." unique_id=1659114147]
+
+[node name="WebBridge" type="Node" parent="." unique_id=932988767]
 script = ExtResource("2_wb8h2")
 
 [node name="UiManager" parent="." unique_id=2042015992 instance=ExtResource("1_ig7tw")]

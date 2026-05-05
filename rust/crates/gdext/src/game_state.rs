@@ -48,9 +48,9 @@ impl INode for GameState {
     fn ready(&mut self) {
         self.base_mut().set_process(true);
 
-        let mut join_button = self.base().get_node_as::<Button>(
-            "UiManager/CenterContainer/VBoxContainer/Mobile/VBoxContainer/Join",
-        );
+        let mut join_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Mobile/VBoxContainer/Join");
         let mut create_button = self.base().get_node_as::<Button>(
             "UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Create",
         );
@@ -67,9 +67,9 @@ impl INode for GameState {
         self.accel = self.browser_accel();
         self.is_mobile = self.is_mobile_web();
 
-        let mut accel_label = self.base_mut().get_node_as::<Label>(
-            "UiManager/CenterContainer/VBoxContainer/Mobile/VBoxContainer/Accel",
-        );
+        let mut accel_label = self
+            .base_mut()
+            .get_node_as::<Label>("UiManager/Mobile/VBoxContainer/Accel");
         accel_label.set_text(&format!(
             "Accel: x={:.2} y={:.2} z={:.2}",
             self.accel.x, self.accel.y, self.accel.z

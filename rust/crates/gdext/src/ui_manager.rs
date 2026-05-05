@@ -20,9 +20,7 @@ impl IControl for UiManager {
 
 impl UiManager {
     pub fn set_screen(&mut self, s: Screen, is_mobile: bool) {
-        let mut mobile = self
-            .base_mut()
-            .get_node_as::<Control>("CenterContainer/VBoxContainer/Mobile");
+        let mut mobile = self.base_mut().get_node_as::<Control>("Mobile");
         let mut desktop = self
             .base_mut()
             .get_node_as::<Control>("CenterContainer/VBoxContainer/Desktop");
