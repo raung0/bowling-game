@@ -35,36 +35,43 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -160.0
-offset_top = -84.0
-offset_right = 160.0
-offset_bottom = 84.0
+offset_left = -220.0
+offset_top = -190.0
+offset_right = 220.0
+offset_bottom = 190.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 24
 
 [node name="Username" type="LineEdit" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=74195061]
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(360, 60)
-theme_override_font_sizes/font_size = 24
+custom_minimum_size = Vector2(420, 72)
+theme_override_font_sizes/font_size = 28
 placeholder_text = "Username"
 alignment = 1
 
 [node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=547072341]
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(360, 60)
-theme_override_font_sizes/font_size = 24
+custom_minimum_size = Vector2(420, 72)
+theme_override_font_sizes/font_size = 28
 placeholder_text = "Lobby Code"
 alignment = 1
 
 [node name="Join" type="Button" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer" unique_id=477241338]
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(360, 68)
-theme_override_font_sizes/font_size = 24
+custom_minimum_size = Vector2(420, 84)
+theme_override_font_sizes/font_size = 30
 text = "Join Lobby"
+
+[node name="Accel" type="Label" parent="CenterContainer/VBoxContainer/Mobile/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
+text = "Accel: x=0.00 y=0.00 z=0.00"
+horizontal_alignment = 1
 
 [node name="Desktop" type="Control" parent="CenterContainer/VBoxContainer" unique_id=1966833876]
 layout_mode = 1

@@ -1,6 +1,6 @@
 use getset::Getters;
 use godot::{
-    classes::{Button, DisplayServer, Input},
+    classes::{Button, Label, Node},
     prelude::*,
 };
 
@@ -35,7 +35,7 @@ pub struct GameState {
 #[godot_api]
 impl INode for GameState {
     fn init(base: Base<Node>) -> Self {
-        let is_mobile = is_mobile_web();
+        let is_mobile = false;
 
         Self {
             base,
@@ -64,7 +64,16 @@ impl INode for GameState {
     }
 
     fn process(&mut self, _delta: f64) {
-        self.accel = browser_accel();
+        self.accel = self.browser_accel();
+        self.is_mobile = self.is_mobile_web();
+
+        let mut accel_label = self.base_mut().get_node_as::<Label>(
+            "UiManager/CenterContainer/VBoxContainer/Mobile/VBoxContainer/Accel",
+        );
+        accel_label.set_text(&format!(
+            "Accel: x={:.2} y={:.2} z={:.2}",
+            self.accel.x, self.accel.y, self.accel.z
+        ));
 
         let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
         ui_manager
@@ -80,6 +89,38 @@ impl GameState {
             .get_root()
             .unwrap()
             .get_node_as::<GameState>("GameState")
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn browser_accel(&self) -> Vector3 {
+        let bridge = self.base().get_node_or_null("WebBridge");
+        let Some(mut bridge) = bridge else {
+            return Vector3::ZERO;
+        };
+
+        let value = bridge.call("get_accelerometer", &[]);
+        value.try_to::<Vector3>().unwrap_or(Vector3::ZERO)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn browser_accel(&self) -> Vector3 {
+        Vector3::ZERO
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn is_mobile_web(&self) -> bool {
+        let bridge = self.base().get_node_or_null("WebBridge");
+        let Some(mut bridge) = bridge else {
+            return false;
+        };
+
+        let value = bridge.call("is_mobile", &[]);
+        value.try_to::<bool>().unwrap_or(false)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_mobile_web(&self) -> bool {
+        false
     }
 }
 
@@ -102,28 +143,4 @@ impl GameState {
         godot_print!("Spectate clicked!");
         self.screen = Screen::Game;
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_accel() -> Vector3 {
-    Input::singleton().get_accelerometer()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn browser_accel() -> Vector3 {
-    Vector3::ZERO
-}
-
-#[cfg(target_arch = "wasm32")]
-fn is_mobile_web() -> bool {
-    let has_touch = DisplayServer::singleton().is_touchscreen_available();
-    let window_size = DisplayServer::singleton().window_get_size();
-    let is_narrow = window_size.x <= 1024;
-
-    has_touch || is_narrow
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn is_mobile_web() -> bool {
-    false
 }

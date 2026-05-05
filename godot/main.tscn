@@ -1,7 +1,11 @@
 [gd_scene format=3 uid="uid://dbjivejplralk"]
 
 [ext_resource type="PackedScene" uid="uid://dy3wsajldrccu" path="res://UI.tscn" id="1_ig7tw"]
+[ext_resource type="Script" path="res://web_bridge.gd" id="2_wb8h2"]
 
 [node name="GameState" type="GameState" unique_id=99481752]
+
+[node name="WebBridge" type="Node" parent="."]
+script = ExtResource("2_wb8h2")
 
 [node name="UiManager" parent="." unique_id=2042015992 instance=ExtResource("1_ig7tw")]
