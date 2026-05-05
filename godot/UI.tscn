@@ -23,14 +23,98 @@ grow_vertical = 2
 [node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer" unique_id=1121172606]
 layout_mode = 2
 
+[node name="Desktop" type="CenterContainer" parent="CenterContainer/VBoxContainer" unique_id=1966833876]
+visible = false
+layout_mode = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/Desktop" unique_id=853358637]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Create" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=702747589]
+custom_minimum_size = Vector2(360, 52)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Create lobby"
+
+[node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=328286286]
+custom_minimum_size = Vector2(360, 48)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Lobby Code"
+alignment = 1
+
+[node name="Spectate" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=1587907184]
+custom_minimum_size = Vector2(360, 52)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Spectate Lobby"
+
+[node name="DesktopHost" type="CenterContainer" parent="CenterContainer/VBoxContainer" unique_id=949091076]
+layout_mode = 2
+
+[node name="PanelContainer" type="PanelContainer" parent="CenterContainer/VBoxContainer/DesktopHost" unique_id=849623045]
+custom_minimum_size = Vector2(500, 420)
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer" unique_id=652201378]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer" unique_id=1214626958]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="RoomCodeTitle" type="Label" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=398145296]
+layout_mode = 2
+text = "Room Code"
+
+[node name="RoomCodeValue" type="Label" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=1101356994]
+layout_mode = 2
+text = "ABC123"
+
+[node name="PlayersTitle" type="Label" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=1142916889]
+layout_mode = 2
+text = "Players"
+
+[node name="Players" type="VBoxContainer" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=2106827942]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="Player1" type="Label" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Players" unique_id=528061509]
+layout_mode = 2
+text = "Player 1"
+
+[node name="Player2" type="Label" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Players" unique_id=173066937]
+layout_mode = 2
+text = "Player 2"
+
+[node name="Actions" type="HBoxContainer" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=437129141]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Back" type="Button" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions" unique_id=1968750427]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Back"
+
+[node name="Start" type="Button" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions" unique_id=1518002129]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start"
+
 [node name="Mobile" type="Control" parent="." unique_id=585124077]
+visible = false
 layout_mode = 1
 anchor_left = 0.05
-anchor_top = 0.0
 anchor_right = 0.95
 anchor_bottom = 1.0
-offset_top = 0.0
-offset_bottom = 0.0
 
 [node name="VBoxContainer" type="VBoxContainer" parent="Mobile" unique_id=1121476809]
 layout_mode = 1
@@ -39,8 +123,8 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-alignment = 1
 theme_override_constants/separation = 32
+alignment = 1
 
 [node name="Username" type="LineEdit" parent="Mobile/VBoxContainer" unique_id=74195061]
 custom_minimum_size = Vector2(0, 96)
@@ -72,29 +156,3 @@ theme_override_font_sizes/font_size = 28
 text = "Accel: x=0.00 y=0.00 z=0.00"
 label_settings = SubResource("LabelSettings_wusub")
 horizontal_alignment = 1
-
-[node name="Desktop" type="CenterContainer" parent="CenterContainer/VBoxContainer" unique_id=1966833876]
-layout_mode = 2
-
-[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/Desktop" unique_id=853358637]
-layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="Create" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=702747589]
-custom_minimum_size = Vector2(360, 52)
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Create lobby"
-
-[node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=328286286]
-custom_minimum_size = Vector2(360, 48)
-layout_mode = 2
-size_flags_horizontal = 3
-placeholder_text = "Lobby Code"
-alignment = 1
-
-[node name="Spectate" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=1587907184]
-custom_minimum_size = Vector2(360, 52)
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Spectate Lobby"

@@ -57,10 +57,14 @@ impl INode for GameState {
         let mut spectate_button = self.base().get_node_as::<Button>(
             "UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Spectate",
         );
+        let mut back_button = self.base().get_node_as::<Button>(
+            "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back",
+        );
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         create_button.connect("pressed", &self.base().callable("on_create_pressed"));
         spectate_button.connect("pressed", &self.base().callable("on_spectate_pressed"));
+        back_button.connect("pressed", &self.base().callable("on_back_pressed"));
     }
 
     fn process(&mut self, _delta: f64) {
@@ -142,5 +146,11 @@ impl GameState {
     fn on_spectate_pressed(&mut self) {
         godot_print!("Spectate clicked!");
         self.screen = Screen::Game;
+    }
+
+    #[func]
+    fn on_back_pressed(&mut self) {
+        godot_print!("Back clicked!");
+        self.screen = Screen::MainMenu;
     }
 }

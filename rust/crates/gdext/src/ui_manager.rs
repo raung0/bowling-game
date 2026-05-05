@@ -24,17 +24,26 @@ impl UiManager {
         let mut desktop = self
             .base_mut()
             .get_node_as::<Control>("CenterContainer/VBoxContainer/Desktop");
+        let mut desktop_host = self
+            .base_mut()
+            .get_node_as::<Control>("CenterContainer/VBoxContainer/DesktopHost");
         match s {
             Screen::MainMenu => {
                 if is_mobile {
                     desktop.set_visible(false);
+                    desktop_host.set_visible(false);
                     mobile.set_visible(true);
                 } else {
                     desktop.set_visible(true);
+                    desktop_host.set_visible(false);
                     mobile.set_visible(false);
                 }
             }
-            Screen::Host => {}
+            Screen::Host => {
+                desktop.set_visible(false);
+                desktop_host.set_visible(true);
+                mobile.set_visible(false);
+            }
             Screen::Game => {}
         }
     }
