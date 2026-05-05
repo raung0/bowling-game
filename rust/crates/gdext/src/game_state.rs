@@ -32,11 +32,7 @@ pub struct GameState {
 #[godot_api]
 impl INode for GameState {
     fn init(base: Base<Node>) -> Self {
-        #[cfg(target_arch = "wasm32")]
-        let is_mobile = wasm::is_mobile();
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let is_mobile = false;
+        let is_mobile = is_mobile_web();
 
         Self {
             base,
@@ -65,13 +61,7 @@ impl INode for GameState {
     }
 
     fn process(&mut self, _delta: f64) {
-        #[cfg(target_arch = "wasm32")]
-        let accel = wasm::browser_accel();
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let accel = Vector3::ZERO;
-
-        self.accel = accel;
+        self.accel = browser_accel();
 
         let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
         ui_manager
@@ -112,29 +102,21 @@ impl GameState {
 }
 
 #[cfg(target_arch = "wasm32")]
-mod wasm {
-    use wasm_bindgen::prelude::*;
+fn browser_accel() -> Vector3 {
+    Vector3::ZERO
+}
 
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_namespace = ["window", "godotMotion"], js_name = x)]
-        fn motion_x() -> f64;
+#[cfg(not(target_arch = "wasm32"))]
+fn browser_accel() -> Vector3 {
+    Vector3::ZERO
+}
 
-        #[wasm_bindgen(js_namespace = ["window", "godotMotion"], js_name = y)]
-        fn motion_y() -> f64;
+#[cfg(target_arch = "wasm32")]
+fn is_mobile_web() -> bool {
+    false
+}
 
-        #[wasm_bindgen(js_namespace = ["window", "godotMotion"], js_name = z)]
-        fn motion_z() -> f64;
-
-        #[wasm_bindgen(js_namespace = ["window", "godotMotion"], js_name = is_mobile)]
-        fn js_is_mobile() -> bool;
-    }
-
-    pub(super) fn browser_accel() -> godot::builtin::Vector3 {
-        godot::builtin::Vector3::new(motion_x() as f32, motion_y() as f32, motion_z() as f32)
-    }
-
-    pub(super) fn is_mobile() -> bool {
-        js_is_mobile()
-    }
+#[cfg(not(target_arch = "wasm32"))]
+fn is_mobile_web() -> bool {
+    false
 }
