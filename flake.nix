@@ -83,20 +83,16 @@
                 export HOME="$TMPDIR/home"
                 export XDG_DATA_HOME="$HOME/.local/share"
                 export XDG_CONFIG_HOME="$HOME/.config"
-                templates_home="$HOME/Library/Application Support/Godot/export_templates"
+                templates_home_xdg="$XDG_DATA_HOME/godot/export_templates"
+                templates_home_macos="$HOME/Library/Application Support/Godot/export_templates"
                 templates_src="${pkgs.godot_4-export-templates-bin}/share/godot/export_templates"
-                mkdir -p "$templates_home"
+                mkdir -p "$templates_home_xdg" "$templates_home_macos"
                 for version_dir in "$templates_src"/*; do
                   if [ -d "$version_dir" ]; then
-                    ln -s "$version_dir" "$templates_home/$(basename "$version_dir")"
+                    ln -s "$version_dir" "$templates_home_xdg/$(basename "$version_dir")"
+                    ln -s "$version_dir" "$templates_home_macos/$(basename "$version_dir")"
                   fi
                 done
-                if [ ! -d "$templates_home/4.6.2.stable" ]; then
-                  first_version_dir="$(ls -1 "$templates_home" | head -n 1)"
-                  if [ -n "$first_version_dir" ]; then
-                    ln -s "$templates_home/$first_version_dir" "$templates_home/4.6.2.stable"
-                  fi
-                fi
                 bash "$NIX_BUILD_TOP/$sourceRoot/scripts/make_web.sh"
               '';
 
