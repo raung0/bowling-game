@@ -50,6 +50,49 @@
         };
       in
       {
+        packages =
+          let
+            server = pkgs.rustPlatform.buildRustPackage {
+              pname = "server";
+              version = "0.1.0";
+
+              src = ./.;
+              cargoRoot = "rust";
+              buildAndTestSubdir = "crates/server";
+              cargoBuildFlags = [ "-p" "server" ];
+
+              cargoLock = {
+                lockFile = ./rust/Cargo.lock;
+                allowBuiltinFetchGit = true;
+              };
+
+              nativeBuildInputs = with pkgs; [
+                rustToolchain
+                pkg-config
+                emscripten
+                godot_4
+                python3
+              ];
+
+              buildInputs = with pkgs; [
+                openssl
+              ];
+
+              preBuild = ''
+                bash "$NIX_BUILD_TOP/source/scripts/make_web.sh"
+              '';
+
+              env = {
+                CC_wasm32_unknown_emscripten = "emcc";
+                CXX_wasm32_unknown_emscripten = "em++";
+              };
+            };
+          in
+          {
+            inherit server;
+            default = server;
+          };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rustToolchain
@@ -60,6 +103,7 @@
             cargo-watch
             rust-analyzer
             emscripten
+            python3
             godot_4
           ];
 
