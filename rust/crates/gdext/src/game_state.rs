@@ -28,6 +28,7 @@ const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
 const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
 const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.08;
 const CALIBRATION_THROW_COUNT: usize = 3;
+const THROW_SETTLE_SECS: f64 = 5.0;
 
 #[derive(Clone, Copy, Default)]
 pub enum Screen {
@@ -74,6 +75,8 @@ pub struct GameState {
     calibration_offset_x: f32,
     host_ball_was_launched: bool,
     host_throw_start_fallen: i32,
+    host_throw_waiting_report: bool,
+    host_throw_settle_secs: f64,
 
     base: Base<Node>,
 }
@@ -106,6 +109,8 @@ impl INode for GameState {
             calibration_offset_x: 0.0,
             host_ball_was_launched: false,
             host_throw_start_fallen: 0,
+            host_throw_waiting_report: false,
+            host_throw_settle_secs: 0.0,
         }
     }
 
@@ -168,7 +173,7 @@ impl INode for GameState {
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
         self.update_controller_strength();
-        self.maybe_finish_host_throw();
+        self.maybe_finish_host_throw(delta);
 
         let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
         ui_manager
@@ -229,6 +234,8 @@ impl GameState {
         }
         self.host_ball_was_launched = false;
         self.host_throw_start_fallen = 0;
+        self.host_throw_waiting_report = false;
+        self.host_throw_settle_secs = 0.0;
     }
 
     fn render_mobile_accel(&mut self) {
@@ -550,26 +557,49 @@ impl GameState {
         (force, direction)
     }
 
-    fn maybe_finish_host_throw(&mut self) {
+    fn maybe_finish_host_throw(&mut self, delta: f64) {
         if !self.is_host() {
             return;
         }
 
         let Some(ball) = self.try_ball() else { return };
         let launched = ball.bind().is_launched();
-        if self.host_ball_was_launched && !launched {
+
+        if launched {
+            self.host_ball_was_launched = true;
+            self.host_throw_waiting_report = false;
+            self.host_throw_settle_secs = 0.0;
+            return;
+        }
+
+        if self.host_ball_was_launched && !self.host_throw_waiting_report {
+            self.host_throw_waiting_report = true;
+            self.host_throw_settle_secs = 0.0;
+            return;
+        }
+
+        if self.host_throw_waiting_report {
+            self.host_throw_settle_secs += delta;
+
+            if self.host_throw_settle_secs < THROW_SETTLE_SECS {
+                return;
+            }
+
             self.host_ball_was_launched = false;
+            self.host_throw_waiting_report = false;
+            self.host_throw_settle_secs = 0.0;
+
             let fallen_count = self.current_fallen_count();
             let standing_count = self.current_standing_count();
             let knocked = (fallen_count - self.host_throw_start_fallen).max(0) as u8;
+
             self.send_message(ClientMessage::ReportThrowResult {
                 knocked_pins: knocked,
                 standing_pins: standing_count.max(0) as u8,
             });
+
             self.host_throw_start_fallen = fallen_count;
-            return;
         }
-        self.host_ball_was_launched = launched;
     }
 
     fn current_fallen_count(&self) -> i32 {
@@ -599,9 +629,14 @@ impl GameState {
             same_player && self.scoreboard.current_roll > 1 && self.scoreboard.pins_remaining < 10;
 
         if should_keep_rack {
+            if let Some(mut game_manager) = self.try_game_manager() {
+                game_manager.bind_mut().clear_fallen_pins();
+            }
+
             if let Some(mut ball) = self.try_ball() {
                 ball.bind_mut().reset_ball();
             }
+
             self.host_throw_start_fallen = self.current_fallen_count();
         } else {
             self.reset_lane_for_turn();

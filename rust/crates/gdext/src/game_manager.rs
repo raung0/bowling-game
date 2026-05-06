@@ -129,4 +129,19 @@ impl GameManager {
     pub fn standing_count(&self) -> i32 {
         self.pins_fallen.iter().filter(|fallen| !**fallen).count() as i32
     }
+
+    #[func]
+    pub fn clear_fallen_pins(&mut self) {
+        let Some(pins_root) = self.pins_root.as_mut() else {
+            return;
+        };
+
+        for mut child in pins_root.get_children().iter_shared() {
+            let pin_index = child.get("pin_index").try_to::<i32>().unwrap_or(-1);
+
+            if pin_index >= 0 && self.is_pin_fallen(pin_index) {
+                child.queue_free();
+            }
+        }
+    }
 }
