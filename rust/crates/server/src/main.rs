@@ -15,7 +15,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use common::{ClientMessage, PlayerInfo, ServerMessage};
+use common::{
+    ClientMessage, FrameScoreView, PlayerInfo, PlayerScoreView, ScoreboardState, ServerMessage,
+};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use rust_embed::RustEmbed;
@@ -57,6 +59,7 @@ struct Lobby {
     current_turn: Option<usize>,
     game_in_progress: bool,
     ball_in_play: bool,
+    bowling: BowlingState,
 }
 
 struct Player {
@@ -64,6 +67,24 @@ struct Player {
     session: String,
     tx: Option<mpsc::UnboundedSender<Message>>,
     disconnected_at: Option<Instant>,
+}
+
+#[derive(Default)]
+struct BowlingState {
+    players: HashMap<String, PlayerBowlingState>,
+    pins_remaining: u8,
+    current_roll: u8,
+    game_over: bool,
+}
+
+#[derive(Default, Clone)]
+struct PlayerBowlingState {
+    frames: Vec<FrameRecord>,
+}
+
+#[derive(Default, Clone)]
+struct FrameRecord {
+    rolls: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -224,6 +245,7 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                         current_turn: None,
                         game_in_progress: false,
                         ball_in_play: false,
+                        bowling: BowlingState::default(),
                     };
 
                     s.host_sessions.insert(host_session.clone(), code.clone());
@@ -350,7 +372,7 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
             }
             ClientMessage::StartGame => {
                 if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
-                    if let Some(current_player_id) = start_game(&state, &code).await {
+                    if let Some((current_player_id, scoreboard)) = start_game(&state, &code).await {
                         broadcast_lobby(
                             &state,
                             &code,
@@ -358,6 +380,12 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                                 code: code.clone(),
                                 current_player_id,
                             },
+                        )
+                        .await;
+                        broadcast_lobby(
+                            &state,
+                            &code,
+                            &ServerMessage::ScoreboardUpdated { scoreboard },
                         )
                         .await;
                     } else {
@@ -419,28 +447,29 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     );
                 }
             }
-            ClientMessage::AdvanceTurn => {
+            ClientMessage::ReportThrowResult {
+                knocked_pins,
+                standing_pins,
+            } => {
                 if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
-                    if let Some(current_player_id) = advance_turn(&state, &code).await {
-                        broadcast_lobby(
-                            &state,
-                            &code,
-                            &ServerMessage::TurnChanged { current_player_id },
-                        )
-                        .await;
-                    } else {
-                        let _ = send_to_tx(
-                            &tx,
-                            &ServerMessage::Error {
-                                message: "no connected players available for next turn".into(),
-                            },
-                        );
+                    match apply_throw_result(&state, &code, knocked_pins, standing_pins).await {
+                        Ok(scoreboard) => {
+                            broadcast_lobby(
+                                &state,
+                                &code,
+                                &ServerMessage::ScoreboardUpdated { scoreboard },
+                            )
+                            .await;
+                        }
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
                     }
                 } else {
                     let _ = send_to_tx(
                         &tx,
                         &ServerMessage::Error {
-                            message: "only host can advance turn".into(),
+                            message: "only host can report throw results".into(),
                         },
                     );
                 }
@@ -459,7 +488,7 @@ async fn reconnect_host(
     code: &str,
     session: &str,
 ) -> bool {
-    let (players, current_player_id) = {
+    let (players, scoreboard) = {
         let mut s = state.lock().await;
         let Some(mapped_code) = s.host_sessions.get(session) else {
             return false;
@@ -476,11 +505,12 @@ async fn reconnect_host(
 
         lobby.host_tx = Some(tx.clone());
         lobby.host_disconnected_at = None;
-        let current_player_id = lobby
-            .current_turn
-            .and_then(|idx| lobby.player_order.get(idx))
-            .cloned();
-        (lobby_players(lobby), current_player_id)
+        let scoreboard = if lobby.game_in_progress {
+            Some(build_scoreboard(lobby))
+        } else {
+            None
+        };
+        (lobby_players(lobby), scoreboard)
     };
 
     let _ = send_to_tx(
@@ -490,8 +520,8 @@ async fn reconnect_host(
             players: players.clone(),
         },
     );
-    if let Some(current_player_id) = current_player_id {
-        let _ = send_to_tx(tx, &ServerMessage::TurnChanged { current_player_id });
+    if let Some(scoreboard) = scoreboard {
+        let _ = send_to_tx(tx, &ServerMessage::ScoreboardUpdated { scoreboard });
     }
     broadcast_lobby(
         state,
@@ -511,7 +541,7 @@ async fn reconnect_player(
     code: &str,
     session: &str,
 ) -> bool {
-    let (player_id, players, current_player_id) = {
+    let (player_id, players, scoreboard) = {
         let mut s = state.lock().await;
         let Some(sref) = s.player_sessions.get(session) else {
             return false;
@@ -529,11 +559,12 @@ async fn reconnect_player(
 
         player.tx = Some(tx.clone());
         player.disconnected_at = None;
-        let current_player_id = lobby
-            .current_turn
-            .and_then(|idx| lobby.player_order.get(idx))
-            .cloned();
-        (player_id, lobby_players(lobby), current_player_id)
+        let scoreboard = if lobby.game_in_progress {
+            Some(build_scoreboard(lobby))
+        } else {
+            None
+        };
+        (player_id, lobby_players(lobby), scoreboard)
     };
 
     let _ = send_to_tx(
@@ -545,8 +576,8 @@ async fn reconnect_player(
             players: players.clone(),
         },
     );
-    if let Some(current_player_id) = current_player_id {
-        let _ = send_to_tx(tx, &ServerMessage::TurnChanged { current_player_id });
+    if let Some(scoreboard) = scoreboard {
+        let _ = send_to_tx(tx, &ServerMessage::ScoreboardUpdated { scoreboard });
     }
     broadcast_lobby(
         state,
@@ -661,14 +692,25 @@ async fn close_lobby(state: &SharedState, code: &str, reason: &str) {
     }
 }
 
-async fn start_game(state: &SharedState, code: &str) -> Option<String> {
+async fn start_game(state: &SharedState, code: &str) -> Option<(String, ScoreboardState)> {
     let mut s = state.lock().await;
     let lobby = s.lobbies.get_mut(code)?;
     let turn_index = next_connected_turn_index(lobby, None)?;
     lobby.game_in_progress = true;
     lobby.ball_in_play = false;
     lobby.current_turn = Some(turn_index);
-    lobby.player_order.get(turn_index).cloned()
+    lobby.bowling = BowlingState::default();
+    lobby.bowling.pins_remaining = 10;
+    lobby.bowling.current_roll = 1;
+    for player_id in &lobby.player_order {
+        lobby
+            .bowling
+            .players
+            .insert(player_id.clone(), PlayerBowlingState::default());
+    }
+    let current_player_id = lobby.player_order.get(turn_index)?.clone();
+    let scoreboard = build_scoreboard(lobby);
+    Some((current_player_id, scoreboard))
 }
 
 async fn relay_throw_event(
@@ -721,17 +763,82 @@ async fn relay_throw_event(
     Ok(player_id)
 }
 
-async fn advance_turn(state: &SharedState, code: &str) -> Option<String> {
+async fn apply_throw_result(
+    state: &SharedState,
+    code: &str,
+    knocked_pins: u8,
+    standing_pins: u8,
+) -> Result<ScoreboardState, String> {
     let mut s = state.lock().await;
-    let lobby = s.lobbies.get_mut(code)?;
+    let lobby = s
+        .lobbies
+        .get_mut(code)
+        .ok_or_else(|| "lobby not found".to_string())?;
     if !lobby.game_in_progress {
-        return None;
+        return Err("game has not started".into());
     }
+    if !lobby.ball_in_play {
+        return Err("no throw in progress".into());
+    }
+    if lobby.bowling.game_over {
+        return Err("game is already over".into());
+    }
+
+    let current_turn = lobby
+        .current_turn
+        .ok_or_else(|| "no active player turn".to_string())?;
+    let current_player_id = lobby
+        .player_order
+        .get(current_turn)
+        .cloned()
+        .ok_or_else(|| "active player not found".to_string())?;
+
+    if knocked_pins > lobby.bowling.pins_remaining {
+        return Err("knocked pins exceed remaining pins".into());
+    }
+    if standing_pins + knocked_pins != lobby.bowling.pins_remaining {
+        return Err("standing pins do not match throw result".into());
+    }
+
+    let player_state = lobby
+        .bowling
+        .players
+        .entry(current_player_id)
+        .or_insert_with(PlayerBowlingState::default);
+    let frame_index = active_frame_index(player_state);
+    if frame_index >= 10 {
+        return Err("player has already finished the game".into());
+    }
+    if player_state.frames.len() == frame_index {
+        player_state.frames.push(FrameRecord::default());
+    }
+    let frame = &mut player_state.frames[frame_index];
+    frame.rolls.push(knocked_pins);
+
     lobby.ball_in_play = false;
-    // TODO: replace this temporary round-robin turn system with real bowling frame logic.
-    let turn_index = next_connected_turn_index(lobby, lobby.current_turn)?;
-    lobby.current_turn = Some(turn_index);
-    lobby.player_order.get(turn_index).cloned()
+    if let Some((next_roll, next_pins_remaining)) = continuing_turn_state(frame_index, &frame.rolls)
+    {
+        lobby.bowling.current_roll = next_roll;
+        lobby.bowling.pins_remaining = next_pins_remaining;
+    } else if let Some(next_turn) = next_connected_turn_index(lobby, lobby.current_turn) {
+        lobby.current_turn = Some(next_turn);
+        lobby.bowling.current_roll = 1;
+        lobby.bowling.pins_remaining = 10;
+    } else {
+        lobby.current_turn = None;
+        lobby.bowling.current_roll = 0;
+        lobby.bowling.pins_remaining = 0;
+        lobby.bowling.game_over = all_players_finished(lobby);
+    }
+
+    if all_players_finished(lobby) {
+        lobby.current_turn = None;
+        lobby.bowling.current_roll = 0;
+        lobby.bowling.pins_remaining = 0;
+        lobby.bowling.game_over = true;
+    }
+
+    Ok(build_scoreboard(lobby))
 }
 
 async fn remove_player_session(state: &SharedState, code: &str, player_id: &str, session: &str) {
@@ -741,8 +848,21 @@ async fn remove_player_session(state: &SharedState, code: &str, player_id: &str,
             let Some(lobby) = s.lobbies.get_mut(code) else {
                 return;
             };
+            let removed_index = lobby.player_order.iter().position(|id| id == player_id);
             let player = lobby.players.remove(player_id);
             lobby.player_order.retain(|id| id != player_id);
+            lobby.bowling.players.remove(player_id);
+            if let (Some(current_turn), Some(removed_index)) = (lobby.current_turn, removed_index) {
+                lobby.current_turn = if lobby.player_order.is_empty() {
+                    None
+                } else if removed_index < current_turn {
+                    Some(current_turn - 1)
+                } else if current_turn >= lobby.player_order.len() {
+                    Some(0)
+                } else {
+                    Some(current_turn)
+                };
+            }
             let players_after = lobby_players(lobby);
             (player.and_then(|p| p.tx), players_after)
         };
@@ -820,6 +940,306 @@ fn lobby_players(lobby: &Lobby) -> Vec<PlayerInfo> {
         .collect()
 }
 
+fn build_scoreboard(lobby: &Lobby) -> ScoreboardState {
+    let current_player_id = lobby
+        .current_turn
+        .and_then(|idx| lobby.player_order.get(idx))
+        .cloned()
+        .unwrap_or_default();
+    let rotation_start = lobby.current_turn.unwrap_or(0);
+    let rotated_ids = rotate_player_order(&lobby.player_order, rotation_start);
+    let players = rotated_ids
+        .into_iter()
+        .filter_map(|player_id| build_player_score_view(lobby, &player_id, &current_player_id))
+        .collect();
+
+    let current_frame = if current_player_id.is_empty() {
+        0
+    } else {
+        lobby
+            .bowling
+            .players
+            .get(&current_player_id)
+            .map(player_frame_number)
+            .unwrap_or(1)
+    };
+
+    ScoreboardState {
+        current_player_id,
+        current_frame,
+        current_roll: lobby.bowling.current_roll,
+        pins_remaining: lobby.bowling.pins_remaining,
+        players,
+        game_over: lobby.bowling.game_over,
+    }
+}
+
+fn build_player_score_view(
+    lobby: &Lobby,
+    player_id: &str,
+    current_player_id: &str,
+) -> Option<PlayerScoreView> {
+    let player = lobby.players.get(player_id)?;
+    let player_state = lobby
+        .bowling
+        .players
+        .get(player_id)
+        .cloned()
+        .unwrap_or_default();
+    let frames = build_frame_views(&player_state);
+    let total_score = frames
+        .iter()
+        .filter_map(|frame| frame.cumulative_score)
+        .next_back()
+        .unwrap_or(0);
+    let finished = player_finished(&player_state);
+    let status_label = if player_id == current_player_id {
+        if lobby.bowling.game_over {
+            "Done".to_string()
+        } else {
+            format!("Frame {}", player_frame_number(&player_state))
+        }
+    } else if finished {
+        "Done".to_string()
+    } else {
+        format!("Frame {}", player_frame_number(&player_state))
+    };
+
+    Some(PlayerScoreView {
+        player_id: player_id.to_string(),
+        username: player.username.clone(),
+        total_score,
+        frames,
+        status_label,
+        finished,
+    })
+}
+
+fn build_frame_views(player_state: &PlayerBowlingState) -> Vec<FrameScoreView> {
+    let mut views = Vec::with_capacity(10);
+    let mut running_total = 0u16;
+    for frame_index in 0..10 {
+        let frame = player_state.frames.get(frame_index);
+        let rolls = frame.map_or_else(Vec::new, |frame| frame_marks(frame_index, &frame.rolls));
+        let frame_score = frame.and_then(|_| score_frame(&player_state.frames, frame_index));
+        let cumulative_score = frame_score.map(|score| {
+            running_total += score;
+            running_total
+        });
+        views.push(FrameScoreView {
+            rolls,
+            cumulative_score,
+        });
+    }
+    views
+}
+
+fn frame_marks(frame_index: usize, rolls: &[u8]) -> Vec<String> {
+    if rolls.is_empty() {
+        return Vec::new();
+    }
+    if frame_index < 9 {
+        if rolls[0] == 10 {
+            return vec!["X".to_string()];
+        }
+        let mut marks = vec![roll_mark(rolls[0])];
+        if let Some(&second) = rolls.get(1) {
+            if rolls[0] + second == 10 {
+                marks.push("/".to_string());
+            } else {
+                marks.push(roll_mark(second));
+            }
+        }
+        return marks;
+    }
+
+    let mut marks = Vec::new();
+    if let Some(&first) = rolls.first() {
+        marks.push(if first == 10 {
+            "X".to_string()
+        } else {
+            roll_mark(first)
+        });
+    }
+    if let Some(&second) = rolls.get(1) {
+        let first = rolls[0];
+        let second_mark = if first == 10 {
+            if second == 10 {
+                "X".to_string()
+            } else {
+                roll_mark(second)
+            }
+        } else if first + second == 10 {
+            "/".to_string()
+        } else {
+            roll_mark(second)
+        };
+        marks.push(second_mark);
+    }
+    if let Some(&third) = rolls.get(2) {
+        let first = rolls[0];
+        let second = rolls[1];
+        let third_mark = if first == 10 {
+            if second == 10 {
+                if third == 10 {
+                    "X".to_string()
+                } else {
+                    roll_mark(third)
+                }
+            } else if second + third == 10 {
+                "/".to_string()
+            } else {
+                roll_mark(third)
+            }
+        } else if first + second == 10 {
+            if third == 10 {
+                "X".to_string()
+            } else {
+                roll_mark(third)
+            }
+        } else {
+            roll_mark(third)
+        };
+        marks.push(third_mark);
+    }
+    marks
+}
+
+fn roll_mark(pins: u8) -> String {
+    if pins == 0 {
+        "-".to_string()
+    } else {
+        pins.to_string()
+    }
+}
+
+fn score_frame(frames: &[FrameRecord], frame_index: usize) -> Option<u16> {
+    let frame = frames.get(frame_index)?;
+    if frame_index == 9 {
+        if frame_complete(frame_index, frame) {
+            return Some(frame.rolls.iter().map(|&roll| roll as u16).sum());
+        }
+        return None;
+    }
+
+    let first = *frame.rolls.first()?;
+    if first == 10 {
+        let bonuses = subsequent_rolls(frames, frame_index + 1);
+        if bonuses.len() >= 2 {
+            return Some(10 + bonuses[0] as u16 + bonuses[1] as u16);
+        }
+        return None;
+    }
+
+    let second = *frame.rolls.get(1)?;
+    if first + second == 10 {
+        let bonus = subsequent_rolls(frames, frame_index + 1).first().copied()?;
+        return Some(10 + bonus as u16);
+    }
+
+    Some(first as u16 + second as u16)
+}
+
+fn subsequent_rolls(frames: &[FrameRecord], start_index: usize) -> Vec<u8> {
+    let mut rolls = Vec::new();
+    for frame in frames.iter().skip(start_index) {
+        rolls.extend(frame.rolls.iter().copied());
+    }
+    rolls
+}
+
+fn player_frame_number(player_state: &PlayerBowlingState) -> u8 {
+    let active_frame = active_frame_index(player_state).min(9);
+    (active_frame + 1) as u8
+}
+
+fn active_frame_index(player_state: &PlayerBowlingState) -> usize {
+    if let Some((idx, _)) = player_state
+        .frames
+        .iter()
+        .enumerate()
+        .find(|(idx, frame)| !frame_complete(*idx, frame))
+    {
+        idx
+    } else {
+        player_state.frames.len()
+    }
+}
+
+fn player_finished(player_state: &PlayerBowlingState) -> bool {
+    player_state.frames.len() >= 10
+        && player_state
+            .frames
+            .get(9)
+            .is_some_and(|frame| frame_complete(9, frame))
+}
+
+fn frame_complete(frame_index: usize, frame: &FrameRecord) -> bool {
+    if frame_index < 9 {
+        frame.rolls.first() == Some(&10) || frame.rolls.len() >= 2
+    } else {
+        match frame.rolls.as_slice() {
+            [] | [_] => false,
+            [first, second] => *first + *second < 10 && *first != 10,
+            _ => true,
+        }
+    }
+}
+
+fn continuing_turn_state(frame_index: usize, rolls: &[u8]) -> Option<(u8, u8)> {
+    if frame_index < 9 {
+        if rolls.len() == 1 && rolls[0] < 10 {
+            return Some((2, 10 - rolls[0]));
+        }
+        return None;
+    }
+
+    match rolls {
+        [first] => {
+            if *first == 10 {
+                Some((2, 10))
+            } else {
+                Some((2, 10 - *first))
+            }
+        }
+        [first, second] => {
+            if *first == 10 {
+                if *second == 10 {
+                    Some((3, 10))
+                } else {
+                    Some((3, 10 - *second))
+                }
+            } else if *first + *second == 10 {
+                Some((3, 10))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn all_players_finished(lobby: &Lobby) -> bool {
+    lobby.player_order.iter().all(|player_id| {
+        lobby
+            .bowling
+            .players
+            .get(player_id)
+            .is_some_and(player_finished)
+    })
+}
+
+fn rotate_player_order(order: &[String], start: usize) -> Vec<String> {
+    if order.is_empty() {
+        return Vec::new();
+    }
+    let mut rotated = Vec::with_capacity(order.len());
+    for offset in 0..order.len() {
+        rotated.push(order[(start + offset) % order.len()].clone());
+    }
+    rotated
+}
+
 fn next_connected_turn_index(lobby: &Lobby, current_turn: Option<usize>) -> Option<usize> {
     if lobby.player_order.is_empty() {
         return None;
@@ -834,7 +1254,12 @@ fn next_connected_turn_index(lobby: &Lobby, current_turn: Option<usize>) -> Opti
         let Some(player) = lobby.players.get(player_id) else {
             continue;
         };
-        if player.tx.is_some() {
+        let finished = lobby
+            .bowling
+            .players
+            .get(player_id)
+            .is_some_and(player_finished);
+        if player.tx.is_some() && !finished {
             return Some(idx);
         }
     }
@@ -843,7 +1268,7 @@ fn next_connected_turn_index(lobby: &Lobby, current_turn: Option<usize>) -> Opti
 }
 
 async fn advance_turn_after_player_change(state: &SharedState, code: &str) {
-    let current_player_id = {
+    let scoreboard = {
         let mut s = state.lock().await;
         let Some(lobby) = s.lobbies.get_mut(code) else {
             return;
@@ -863,17 +1288,19 @@ async fn advance_turn_after_player_change(state: &SharedState, code: &str) {
 
         let Some(next_turn) = next_connected_turn_index(lobby, lobby.current_turn) else {
             lobby.current_turn = None;
+            lobby.bowling.current_roll = 0;
+            lobby.bowling.pins_remaining = 0;
             return;
         };
         lobby.current_turn = Some(next_turn);
-        lobby.player_order.get(next_turn).cloned()
+        Some(build_scoreboard(lobby))
     };
 
-    if let Some(current_player_id) = current_player_id {
+    if let Some(scoreboard) = scoreboard {
         broadcast_lobby(
             state,
             code,
-            &ServerMessage::TurnChanged { current_player_id },
+            &ServerMessage::ScoreboardUpdated { scoreboard },
         )
         .await;
     }

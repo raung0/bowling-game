@@ -25,7 +25,10 @@ pub enum ClientMessage {
         direction_x: f32,
         direction_z: f32,
     },
-    AdvanceTurn,
+    ReportThrowResult {
+        knocked_pins: u8,
+        standing_pins: u8,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +72,9 @@ pub enum ServerMessage {
         direction_x: f32,
         direction_z: f32,
     },
+    ScoreboardUpdated {
+        scoreboard: ScoreboardState,
+    },
     Info {
         message: String,
     },
@@ -82,6 +88,32 @@ pub struct PlayerInfo {
     pub player_id: String,
     pub username: String,
     pub connected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ScoreboardState {
+    pub current_player_id: String,
+    pub current_frame: u8,
+    pub current_roll: u8,
+    pub pins_remaining: u8,
+    pub players: Vec<PlayerScoreView>,
+    pub game_over: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PlayerScoreView {
+    pub player_id: String,
+    pub username: String,
+    pub total_score: u16,
+    pub frames: Vec<FrameScoreView>,
+    pub status_label: String,
+    pub finished: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FrameScoreView {
+    pub rolls: Vec<String>,
+    pub cumulative_score: Option<u16>,
 }
 
 #[derive(Debug, Error)]

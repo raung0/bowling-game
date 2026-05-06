@@ -1,9 +1,11 @@
-use common::{ClientMessage, PlayerInfo, ServerMessage};
+use common::{ClientMessage, PlayerInfo, PlayerScoreView, ScoreboardState, ServerMessage};
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{Button, Label, LineEdit, Node, ProgressBar, VBoxContainer, WebSocketPeer},
-    global::Error,
+    classes::{
+        Button, HBoxContainer, Label, LineEdit, Node, ProgressBar, VBoxContainer, WebSocketPeer,
+    },
+    global::{Error, HorizontalAlignment},
     prelude::*,
 };
 use rand::Rng;
@@ -59,12 +61,14 @@ pub struct GameState {
     lobby_code: String,
     players: Vec<PlayerInfo>,
     current_player_id: String,
+    scoreboard: ScoreboardState,
     controller_holding: bool,
     controller_force: f32,
     controller_direction: Vector2,
     controller_baseline_accel: Vector3,
     controller_motion_history: VecDeque<Vector3>,
     host_ball_was_launched: bool,
+    host_throw_start_fallen: i32,
 
     base: Base<Node>,
 }
@@ -86,12 +90,14 @@ impl INode for GameState {
             lobby_code: String::new(),
             players: Vec::new(),
             current_player_id: String::new(),
+            scoreboard: ScoreboardState::default(),
             controller_holding: false,
             controller_force: 0.0,
             controller_direction: Vector2::new(0.0, 1.0),
             controller_baseline_accel: Vector3::ZERO,
             controller_motion_history: VecDeque::with_capacity(MOTION_HISTORY_LIMIT),
             host_ball_was_launched: false,
+            host_throw_start_fallen: 0,
         }
     }
 
@@ -112,6 +118,9 @@ impl INode for GameState {
         let mut hold_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
+        let mut controller_back_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/BackToMenu");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         create_button.connect("pressed", &self.base().callable("on_create_pressed"));
@@ -120,8 +129,10 @@ impl INode for GameState {
         start_button.connect("pressed", &self.base().callable("on_start_pressed"));
         hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
         hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
+        controller_back_button.connect("pressed", &self.base().callable("on_back_pressed"));
 
         self.ensure_username();
+        self.sync_username_input();
         self.try_auto_reconnect();
     }
 
@@ -191,6 +202,7 @@ impl GameState {
             ball.bind_mut().reset_ball();
         }
         self.host_ball_was_launched = false;
+        self.host_throw_start_fallen = 0;
     }
 
     fn render_mobile_accel(&mut self) {
@@ -263,6 +275,137 @@ impl GameState {
             .base_mut()
             .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/LobbyLabel");
         lobby_label.set_text(&GString::from(lobby_line.as_str()));
+
+        self.render_scoreboard();
+    }
+
+    fn render_scoreboard(&mut self) {
+        let players = self.scoreboard.players.clone();
+        let current = players.first().cloned();
+        let next_players = players.iter().skip(1).take(3).cloned().collect::<Vec<_>>();
+        let remaining = players.iter().skip(4).cloned().collect::<Vec<_>>();
+
+        let mut current_root = self.base_mut().get_node_as::<VBoxContainer>(
+            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/CurrentTable",
+        );
+        Self::clear_container(&mut current_root);
+        if let Some(current) = current.as_ref() {
+            self.add_scorecard(&mut current_root, current, true);
+        }
+
+        let mut next_root = self.base_mut().get_node_as::<VBoxContainer>(
+            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/NextTables",
+        );
+        Self::clear_container(&mut next_root);
+        for player in &next_players {
+            self.add_scorecard(&mut next_root, player, false);
+        }
+
+        let mut remaining_header = self.base_mut().get_node_as::<Label>(
+            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/RemainingHeader",
+        );
+        remaining_header.set_visible(!remaining.is_empty());
+
+        let mut remaining_root = self.base_mut().get_node_as::<VBoxContainer>(
+            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/RemainingPlayers",
+        );
+        Self::clear_container(&mut remaining_root);
+        for player in &remaining {
+            let mut row = HBoxContainer::new_alloc();
+
+            let mut name = Label::new_alloc();
+            name.set_text(&GString::from(player.username.as_str()));
+            row.add_child(&name);
+
+            let mut status = Label::new_alloc();
+            status.set_text(&GString::from(player.status_label.as_str()));
+            row.add_child(&status);
+
+            let mut total = Label::new_alloc();
+            total.set_text(&GString::from(format!("{}", player.total_score).as_str()));
+            row.add_child(&total);
+
+            remaining_root.add_child(&row);
+        }
+    }
+
+    fn add_scorecard(
+        &self,
+        root: &mut Gd<VBoxContainer>,
+        player: &PlayerScoreView,
+        featured: bool,
+    ) {
+        let mut wrapper = VBoxContainer::new_alloc();
+        wrapper.add_theme_constant_override("separation", if featured { 8 } else { 6 });
+
+        let mut header = HBoxContainer::new_alloc();
+        let mut name = Label::new_alloc();
+        name.set_text(&GString::from(player.username.as_str()));
+        name.add_theme_font_size_override("font_size", if featured { 28 } else { 22 });
+        header.add_child(&name);
+
+        let mut status = Label::new_alloc();
+        status.set_text(&GString::from(player.status_label.as_str()));
+        status.add_theme_font_size_override("font_size", if featured { 20 } else { 16 });
+        header.add_child(&status);
+
+        let mut total = Label::new_alloc();
+        total.set_text(&GString::from(format!("{}", player.total_score).as_str()));
+        total.add_theme_font_size_override("font_size", if featured { 24 } else { 18 });
+        header.add_child(&total);
+        wrapper.add_child(&header);
+
+        let mut frames = HBoxContainer::new_alloc();
+        frames.add_theme_constant_override("separation", if featured { 6 } else { 4 });
+        for (idx, frame) in player.frames.iter().enumerate() {
+            let mut frame_box = VBoxContainer::new_alloc();
+            frame_box
+                .set_custom_minimum_size(Vector2::new(if featured { 48.0 } else { 38.0 }, 0.0));
+            frame_box.add_theme_constant_override("separation", 2);
+
+            let mut frame_label = Label::new_alloc();
+            frame_label.set_text(&GString::from(format!("{}", idx + 1).as_str()));
+            frame_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
+            frame_label.add_theme_font_size_override("font_size", if featured { 14 } else { 12 });
+            frame_box.add_child(&frame_label);
+
+            let mut rolls_label = Label::new_alloc();
+            let rolls_text = if frame.rolls.is_empty() {
+                String::from(" ")
+            } else {
+                frame.rolls.join(" ")
+            };
+            rolls_label.set_text(&GString::from(rolls_text.as_str()));
+            rolls_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
+            rolls_label.add_theme_font_size_override("font_size", if featured { 16 } else { 13 });
+            frame_box.add_child(&rolls_label);
+
+            let mut score_label = Label::new_alloc();
+            let score_text = frame
+                .cumulative_score
+                .map(|score| score.to_string())
+                .unwrap_or_default();
+            score_label.set_text(&GString::from(score_text.as_str()));
+            score_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
+            score_label.add_theme_font_size_override("font_size", if featured { 16 } else { 13 });
+            frame_box.add_child(&score_label);
+
+            frames.add_child(&frame_box);
+        }
+        wrapper.add_child(&frames);
+        root.add_child(&wrapper);
+    }
+
+    fn clear_container<T>(container: &mut Gd<T>)
+    where
+        T: Inherits<Node>,
+    {
+        let mut node = container.clone().upcast::<Node>();
+        let children = node.get_children();
+        for mut child in children.iter_shared() {
+            node.remove_child(&child);
+            child.queue_free();
+        }
     }
 
     fn update_controller_strength(&mut self) {
@@ -358,10 +501,54 @@ impl GameState {
         let launched = ball.bind().is_launched();
         if self.host_ball_was_launched && !launched {
             self.host_ball_was_launched = false;
-            self.send_message(ClientMessage::AdvanceTurn);
+            let fallen_count = self.current_fallen_count();
+            let standing_count = self.current_standing_count();
+            let knocked = (fallen_count - self.host_throw_start_fallen).max(0) as u8;
+            self.send_message(ClientMessage::ReportThrowResult {
+                knocked_pins: knocked,
+                standing_pins: standing_count.max(0) as u8,
+            });
+            self.host_throw_start_fallen = fallen_count;
             return;
         }
         self.host_ball_was_launched = launched;
+    }
+
+    fn current_fallen_count(&self) -> i32 {
+        self.try_game_manager()
+            .map(|game_manager| game_manager.bind().fallen_count())
+            .unwrap_or(0)
+    }
+
+    fn current_standing_count(&self) -> i32 {
+        self.try_game_manager()
+            .map(|game_manager| game_manager.bind().standing_count())
+            .unwrap_or(10)
+    }
+
+    fn sync_host_lane_to_scoreboard(&mut self, previous: &ScoreboardState) {
+        if !self.is_host() {
+            return;
+        }
+        if self.scoreboard.game_over {
+            self.reset_lane_for_turn();
+            self.host_throw_start_fallen = 0;
+            return;
+        }
+
+        let same_player = previous.current_player_id == self.scoreboard.current_player_id;
+        let should_keep_rack =
+            same_player && self.scoreboard.current_roll > 1 && self.scoreboard.pins_remaining < 10;
+
+        if should_keep_rack {
+            if let Some(mut ball) = self.try_ball() {
+                ball.bind_mut().reset_ball();
+            }
+            self.host_throw_start_fallen = self.current_fallen_count();
+        } else {
+            self.reset_lane_for_turn();
+            self.host_throw_start_fallen = 0;
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -607,9 +794,6 @@ impl GameState {
             } => {
                 self.lobby_code = code;
                 self.current_player_id = current_player_id;
-                if self.is_host() {
-                    self.reset_lane_for_turn();
-                }
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::TurnChanged { current_player_id } => {
@@ -619,9 +803,6 @@ impl GameState {
                 self.controller_direction = Vector2::new(0.0, 1.0);
                 self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
-                if self.is_host() {
-                    self.reset_lane_for_turn();
-                }
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::ThrowEvent {
@@ -643,6 +824,13 @@ impl GameState {
                     self.host_ball_was_launched = true;
                 }
             }
+            ServerMessage::ScoreboardUpdated { scoreboard } => {
+                let previous_scoreboard = self.scoreboard.clone();
+                self.current_player_id = scoreboard.current_player_id.clone();
+                self.scoreboard = scoreboard;
+                self.sync_host_lane_to_scoreboard(&previous_scoreboard);
+                self.screen = self.gameplay_screen();
+            }
             ServerMessage::Info { message } => {
                 self.info_text = message;
                 self.screen = Screen::Info;
@@ -658,6 +846,8 @@ impl GameState {
                 self.session_role = None;
                 self.player_id.clear();
                 self.current_player_id.clear();
+                self.scoreboard = ScoreboardState::default();
+                self.host_throw_start_fallen = 0;
                 self.screen = Screen::MainMenu;
             }
         }
@@ -712,6 +902,19 @@ impl GameState {
             })
             .collect();
         self.set_storage(STORAGE_USERNAME, &format!("Player_{rand_part}"));
+    }
+
+    fn sync_username_input(&mut self) {
+        let username = self.get_storage(STORAGE_USERNAME);
+        if username.trim().is_empty() {
+            return;
+        }
+        let mut username_input = self
+            .base_mut()
+            .get_node_as::<LineEdit>("UiManager/Mobile/VBoxContainer/Username");
+        if username_input.get_text().to_string().trim().is_empty() {
+            username_input.set_text(&GString::from(username.as_str()));
+        }
     }
 
     fn try_auto_reconnect(&mut self) {
@@ -844,11 +1047,14 @@ impl GameState {
         self.lobby_code.clear();
         self.players.clear();
         self.current_player_id.clear();
+        self.scoreboard = ScoreboardState::default();
         self.controller_holding = false;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
         self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
+        self.host_throw_start_fallen = 0;
+        self.sync_username_input();
         self.screen = Screen::MainMenu;
     }
 

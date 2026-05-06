@@ -159,6 +159,45 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Lobby: -"
 
+[node name="ScoreboardPanel" type="Control" parent="GameHud" unique_id=564122119]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -460.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = 640.0
+grow_horizontal = 0
+
+[node name="MarginContainer" type="MarginContainer" parent="GameHud/ScoreboardPanel" unique_id=765470249]
+layout_mode = 0
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="VBoxContainer" type="VBoxContainer" parent="GameHud/ScoreboardPanel/MarginContainer" unique_id=940904931]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="CurrentTable" type="VBoxContainer" parent="GameHud/ScoreboardPanel/MarginContainer/VBoxContainer" unique_id=857032691]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="NextTables" type="VBoxContainer" parent="GameHud/ScoreboardPanel/MarginContainer/VBoxContainer" unique_id=1069410343]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="RemainingHeader" type="Label" parent="GameHud/ScoreboardPanel/MarginContainer/VBoxContainer" unique_id=827861816]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Other Players"
+
+[node name="RemainingPlayers" type="VBoxContainer" parent="GameHud/ScoreboardPanel/MarginContainer/VBoxContainer" unique_id=886071027]
+layout_mode = 2
+theme_override_constants/separation = 6
+
 [node name="Controller" type="Control" parent="." unique_id=2107224770]
 visible = false
 layout_mode = 1
@@ -201,7 +240,6 @@ horizontal_alignment = 1
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 size_flags_horizontal = 3
-max_value = 100.0
 
 [node name="HoldButton" type="Button" parent="Controller/MarginContainer/VBoxContainer" unique_id=913399739]
 custom_minimum_size = Vector2(0, 220)
@@ -209,6 +247,13 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 38
 text = "Hold To Throw"
+
+[node name="BackToMenu" type="Button" parent="Controller/MarginContainer/VBoxContainer" unique_id=1608917289]
+custom_minimum_size = Vector2(0, 84)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 28
+text = "Leave Lobby"
 
 [node name="Mobile" type="Control" parent="." unique_id=585124077]
 visible = false
