@@ -19,6 +19,7 @@ const STORAGE_ROLE: &str = "session_role";
 const STORAGE_TOKEN: &str = "session_token";
 const STORAGE_CODE: &str = "lobby_code";
 const STORAGE_USERNAME: &str = "username";
+const STORAGE_CALIBRATION_X: &str = "calibration_x";
 const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
 const MOTION_HISTORY_LIMIT: usize = 12;
 const MOTION_BASELINE_SAMPLES: usize = 4;
@@ -26,6 +27,7 @@ const MOTION_PEAK_WINDOW_SAMPLES: usize = 3;
 const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
 const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
 const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.2;
+const CALIBRATION_THROW_COUNT: usize = 3;
 
 #[derive(Clone, Copy, Default)]
 pub enum Screen {
@@ -67,6 +69,9 @@ pub struct GameState {
     controller_direction: Vector2,
     controller_baseline_accel: Vector3,
     controller_motion_history: VecDeque<Vector3>,
+    calibration_active: bool,
+    calibration_samples: Vec<f32>,
+    calibration_offset_x: f32,
     host_ball_was_launched: bool,
     host_throw_start_fallen: i32,
 
@@ -96,6 +101,9 @@ impl INode for GameState {
             controller_direction: Vector2::new(0.0, 1.0),
             controller_baseline_accel: Vector3::ZERO,
             controller_motion_history: VecDeque::with_capacity(MOTION_HISTORY_LIMIT),
+            calibration_active: false,
+            calibration_samples: Vec::new(),
+            calibration_offset_x: 0.0,
             host_ball_was_launched: false,
             host_throw_start_fallen: 0,
         }
@@ -107,6 +115,9 @@ impl INode for GameState {
         let mut join_button = self
             .base()
             .get_node_as::<Button>("UiManager/Mobile/VBoxContainer/Join");
+        let mut calibrate_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Mobile/VBoxContainer/Calibrate");
         let mut create_button = self.base().get_node_as::<Button>(
             "UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Create",
         );
@@ -123,6 +134,7 @@ impl INode for GameState {
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/BackToMenu");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
+        calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
         create_button.connect("pressed", &self.base().callable("on_create_pressed"));
         spectate_button.connect("pressed", &self.base().callable("on_spectate_pressed"));
         back_button.connect("pressed", &self.base().callable("on_back_pressed"));
@@ -132,6 +144,7 @@ impl INode for GameState {
         controller_back_button.connect("pressed", &self.base().callable("on_back_pressed"));
 
         self.ensure_username();
+        self.load_calibration();
         self.sync_username_input();
         self.try_auto_reconnect();
     }
@@ -151,6 +164,7 @@ impl INode for GameState {
             .set_screen(self.screen, self.is_mobile);
 
         self.render_mobile_accel();
+        self.render_calibration_status();
         self.render_controller_ui();
         self.render_game_ui();
         self.render_info_text();
@@ -215,8 +229,30 @@ impl GameState {
         ));
     }
 
+    fn render_calibration_status(&mut self) {
+        let mut calibration_label = self
+            .base_mut()
+            .get_node_as::<Label>("UiManager/Mobile/VBoxContainer/CalibrationStatus");
+        let text = if self.calibration_active {
+            format!(
+                "Calibration in progress: {}/{}",
+                self.calibration_samples.len(),
+                CALIBRATION_THROW_COUNT
+            )
+        } else {
+            format!("Calibration offset: {:+.3}", self.calibration_offset_x)
+        };
+        calibration_label.set_text(&GString::from(text.as_str()));
+    }
+
     fn render_controller_ui(&mut self) {
-        let status = if self.current_player_id.is_empty() {
+        let status = if self.calibration_active {
+            format!(
+                "Calibration throw {}/{}: hold, throw straight, release",
+                self.calibration_samples.len() + 1,
+                CALIBRATION_THROW_COUNT
+            )
+        } else if self.current_player_id.is_empty() {
             "Waiting for host...".to_string()
         } else if self.is_local_player_turn() {
             if self.controller_holding {
@@ -251,7 +287,7 @@ impl GameState {
         let mut hold_button = self
             .base_mut()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
-        hold_button.set_disabled(!self.is_local_player_turn());
+        hold_button.set_disabled(!(self.calibration_active || self.is_local_player_turn()));
     }
 
     fn render_game_ui(&mut self) {
@@ -917,6 +953,18 @@ impl GameState {
         }
     }
 
+    fn load_calibration(&mut self) {
+        let raw = self.get_storage(STORAGE_CALIBRATION_X);
+        self.calibration_offset_x = raw.parse::<f32>().unwrap_or(0.0);
+    }
+
+    fn save_calibration(&self) {
+        self.set_storage(
+            STORAGE_CALIBRATION_X,
+            &format!("{}", self.calibration_offset_x),
+        );
+    }
+
     fn try_auto_reconnect(&mut self) {
         let role = self.get_storage(STORAGE_ROLE);
         let token = self.get_storage(STORAGE_TOKEN);
@@ -1053,6 +1101,8 @@ impl GameState {
         self.controller_direction = Vector2::new(0.0, 1.0);
         self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
+        self.calibration_active = false;
+        self.calibration_samples.clear();
         self.host_throw_start_fallen = 0;
         self.sync_username_input();
         self.screen = Screen::MainMenu;
@@ -1067,7 +1117,7 @@ impl GameState {
 
     #[func]
     fn on_hold_button_down(&mut self) {
-        if !self.is_local_player_turn() {
+        if !(self.calibration_active || self.is_local_player_turn()) {
             return;
         }
 
@@ -1092,12 +1142,38 @@ impl GameState {
         self.controller_direction = Vector2::new(0.0, 1.0);
         self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
+        if self.calibration_active {
+            self.calibration_samples.push(direction.x);
+            if self.calibration_samples.len() >= CALIBRATION_THROW_COUNT {
+                let sum: f32 = self.calibration_samples.iter().copied().sum();
+                self.calibration_offset_x = sum / self.calibration_samples.len() as f32;
+                self.save_calibration();
+                self.calibration_active = false;
+                self.calibration_samples.clear();
+                self.screen = Screen::MainMenu;
+            }
+            return;
+        }
         if self.is_local_player_turn() {
+            let corrected =
+                Vector2::new(direction.x - self.calibration_offset_x, direction.y).normalized();
             self.send_message(ClientMessage::ThrowEvent {
                 force,
-                direction_x: direction.x,
-                direction_z: direction.y,
+                direction_x: corrected.x,
+                direction_z: corrected.y,
             });
         }
+    }
+
+    #[func]
+    fn on_calibrate_pressed(&mut self) {
+        self.calibration_active = true;
+        self.calibration_samples.clear();
+        self.controller_holding = false;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = Vector3::ZERO;
+        self.controller_motion_history.clear();
+        self.screen = Screen::Controller;
     }
 }

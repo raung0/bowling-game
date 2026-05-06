@@ -295,6 +295,20 @@ size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 42
 text = "Join Lobby"
 
+[node name="Calibrate" type="Button" parent="Mobile/VBoxContainer" unique_id=210104277]
+custom_minimum_size = Vector2(0, 92)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 34
+text = "Calibrate Throws"
+
+[node name="CalibrationStatus" type="Label" parent="Mobile/VBoxContainer" unique_id=1803234571]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
+text = "Calibration: not set"
+horizontal_alignment = 1
+
 [node name="Accel" type="Label" parent="Mobile/VBoxContainer" unique_id=127234202]
 layout_mode = 2
 size_flags_horizontal = 3
