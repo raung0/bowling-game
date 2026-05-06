@@ -1,9 +1,16 @@
-use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use axum::{
     Router,
     body::Body,
-    extract::{State, ws::{Message, WebSocket, WebSocketUpgrade}},
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
@@ -12,7 +19,10 @@ use common::{ClientMessage, PlayerInfo, ServerMessage};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use rust_embed::RustEmbed;
-use tokio::{sync::{Mutex, mpsc}, time::sleep};
+use tokio::{
+    sync::{Mutex, mpsc},
+    time::sleep,
+};
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -43,6 +53,10 @@ struct Lobby {
     host_tx: Option<mpsc::UnboundedSender<Message>>,
     host_disconnected_at: Option<Instant>,
     players: HashMap<String, Player>,
+    player_order: Vec<String>,
+    current_turn: Option<usize>,
+    game_in_progress: bool,
+    ball_in_play: bool,
 }
 
 struct Player {
@@ -184,7 +198,12 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
         let req = match serde_json::from_str::<ClientMessage>(&text) {
             Ok(v) => v,
             Err(err) => {
-                let _ = send_to_tx(&tx, &ServerMessage::Error { message: format!("invalid request: {err}") });
+                let _ = send_to_tx(
+                    &tx,
+                    &ServerMessage::Error {
+                        message: format!("invalid request: {err}"),
+                    },
+                );
                 continue;
             }
         };
@@ -201,6 +220,10 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                         host_tx: Some(tx.clone()),
                         host_disconnected_at: None,
                         players: HashMap::new(),
+                        player_order: Vec::new(),
+                        current_turn: None,
+                        game_in_progress: false,
+                        ball_in_play: false,
                     };
 
                     s.host_sessions.insert(host_session.clone(), code.clone());
@@ -208,8 +231,18 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     (code, host_session, Vec::new())
                 };
 
-                role = Some(ConnectionRole::Host { code: code.clone(), session: host_session.clone() });
-                let _ = send_to_tx(&tx, &ServerMessage::LobbyCreated { code, host_session, players });
+                role = Some(ConnectionRole::Host {
+                    code: code.clone(),
+                    session: host_session.clone(),
+                });
+                let _ = send_to_tx(
+                    &tx,
+                    &ServerMessage::LobbyCreated {
+                        code,
+                        host_session,
+                        players,
+                    },
+                );
             }
             ClientMessage::JoinLobby { code, username } => {
                 let maybe = {
@@ -218,25 +251,46 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                         let player_id = Uuid::new_v4().to_string();
                         let player_session = Uuid::new_v4().to_string();
 
-                        lobby.players.insert(player_id.clone(), Player {
-                            username,
-                            session: player_session.clone(),
-                            tx: Some(tx.clone()),
-                            disconnected_at: None,
-                        });
+                        lobby.players.insert(
+                            player_id.clone(),
+                            Player {
+                                username,
+                                session: player_session.clone(),
+                                tx: Some(tx.clone()),
+                                disconnected_at: None,
+                            },
+                        );
+                        lobby.player_order.push(player_id.clone());
 
                         let players = lobby_players(lobby);
                         let _ = lobby;
-                        s.player_sessions.insert(player_session.clone(), PlayerSessionRef { code: code.clone(), player_id });
-                        Some((player_session, players))
+                        s.player_sessions.insert(
+                            player_session.clone(),
+                            PlayerSessionRef {
+                                code: code.clone(),
+                                player_id: player_id.clone(),
+                            },
+                        );
+                        Some((player_id, player_session, players))
                     } else {
                         None
                     }
                 };
 
-                if let Some((player_session, players)) = maybe {
-                    role = Some(ConnectionRole::Player { code: code.clone(), session: player_session.clone() });
-                    let _ = send_to_tx(&tx, &ServerMessage::LobbyJoined { code: code.clone(), player_session, players: players.clone() });
+                if let Some((player_id, player_session, players)) = maybe {
+                    role = Some(ConnectionRole::Player {
+                        code: code.clone(),
+                        session: player_session.clone(),
+                    });
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::LobbyJoined {
+                            code: code.clone(),
+                            player_id,
+                            player_session,
+                            players: players.clone(),
+                        },
+                    );
                     broadcast_lobby(
                         &state,
                         &code,
@@ -247,21 +301,45 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     )
                     .await;
                 } else {
-                    let _ = send_to_tx(&tx, &ServerMessage::Error { message: "lobby not found".into() });
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "lobby not found".into(),
+                        },
+                    );
                 }
             }
             ClientMessage::ReconnectHost { code, host_session } => {
                 if reconnect_host(&state, &tx, &code, &host_session).await {
-                    role = Some(ConnectionRole::Host { code, session: host_session });
+                    role = Some(ConnectionRole::Host {
+                        code,
+                        session: host_session,
+                    });
                 } else {
-                    let _ = send_to_tx(&tx, &ServerMessage::Error { message: "host reconnect failed".into() });
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "host reconnect failed".into(),
+                        },
+                    );
                 }
             }
-            ClientMessage::ReconnectPlayer { code, player_session } => {
+            ClientMessage::ReconnectPlayer {
+                code,
+                player_session,
+            } => {
                 if reconnect_player(&state, &tx, &code, &player_session).await {
-                    role = Some(ConnectionRole::Player { code, session: player_session });
+                    role = Some(ConnectionRole::Player {
+                        code,
+                        session: player_session,
+                    });
                 } else {
-                    let _ = send_to_tx(&tx, &ServerMessage::Error { message: "player reconnect failed".into() });
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "player reconnect failed".into(),
+                        },
+                    );
                 }
             }
             ClientMessage::Leave => {
@@ -272,14 +350,84 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
             }
             ClientMessage::StartGame => {
                 if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
-                    broadcast_lobby(
-                        &state,
-                        &code,
-                        &ServerMessage::GameStarted { code: code.clone() },
-                    )
-                    .await;
+                    if let Some(current_player_id) = start_game(&state, &code).await {
+                        broadcast_lobby(
+                            &state,
+                            &code,
+                            &ServerMessage::GameStarted {
+                                code: code.clone(),
+                                current_player_id,
+                            },
+                        )
+                        .await;
+                    } else {
+                        let _ = send_to_tx(
+                            &tx,
+                            &ServerMessage::Error {
+                                message: "need at least one connected player to start".into(),
+                            },
+                        );
+                    }
                 } else {
-                    let _ = send_to_tx(&tx, &ServerMessage::Error { message: "only host can start game".into() });
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only host can start game".into(),
+                        },
+                    );
+                }
+            }
+            ClientMessage::ThrowEvent { strength } => {
+                if let Some(ConnectionRole::Player { code, session }) = role.clone() {
+                    match relay_throw_event(&state, &code, &session, strength).await {
+                        Ok(player_id) => {
+                            broadcast_lobby(
+                                &state,
+                                &code,
+                                &ServerMessage::ThrowEvent {
+                                    player_id,
+                                    strength,
+                                },
+                            )
+                            .await;
+                        }
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only players can throw".into(),
+                        },
+                    );
+                }
+            }
+            ClientMessage::AdvanceTurn => {
+                if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
+                    if let Some(current_player_id) = advance_turn(&state, &code).await {
+                        broadcast_lobby(
+                            &state,
+                            &code,
+                            &ServerMessage::TurnChanged { current_player_id },
+                        )
+                        .await;
+                    } else {
+                        let _ = send_to_tx(
+                            &tx,
+                            &ServerMessage::Error {
+                                message: "no connected players available for next turn".into(),
+                            },
+                        );
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only host can advance turn".into(),
+                        },
+                    );
                 }
             }
         }
@@ -290,44 +438,110 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
     }
 }
 
-async fn reconnect_host(state: &SharedState, tx: &mpsc::UnboundedSender<Message>, code: &str, session: &str) -> bool {
-    let players = {
+async fn reconnect_host(
+    state: &SharedState,
+    tx: &mpsc::UnboundedSender<Message>,
+    code: &str,
+    session: &str,
+) -> bool {
+    let (players, current_player_id) = {
         let mut s = state.lock().await;
-        let Some(mapped_code) = s.host_sessions.get(session) else { return false };
-        if mapped_code != code { return false }
-        let Some(lobby) = s.lobbies.get_mut(code) else { return false };
-        if lobby.host_session != session { return false }
+        let Some(mapped_code) = s.host_sessions.get(session) else {
+            return false;
+        };
+        if mapped_code != code {
+            return false;
+        }
+        let Some(lobby) = s.lobbies.get_mut(code) else {
+            return false;
+        };
+        if lobby.host_session != session {
+            return false;
+        }
 
         lobby.host_tx = Some(tx.clone());
         lobby.host_disconnected_at = None;
-        lobby_players(lobby)
+        let current_player_id = lobby
+            .current_turn
+            .and_then(|idx| lobby.player_order.get(idx))
+            .cloned();
+        (lobby_players(lobby), current_player_id)
     };
 
-    let _ = send_to_tx(tx, &ServerMessage::ReconnectOkHost { code: code.to_string(), players: players.clone() });
-    broadcast_lobby(state, code, &ServerMessage::LobbyUpdated { code: code.to_string(), players }).await;
+    let _ = send_to_tx(
+        tx,
+        &ServerMessage::ReconnectOkHost {
+            code: code.to_string(),
+            players: players.clone(),
+        },
+    );
+    if let Some(current_player_id) = current_player_id {
+        let _ = send_to_tx(tx, &ServerMessage::TurnChanged { current_player_id });
+    }
+    broadcast_lobby(
+        state,
+        code,
+        &ServerMessage::LobbyUpdated {
+            code: code.to_string(),
+            players,
+        },
+    )
+    .await;
     true
 }
 
-async fn reconnect_player(state: &SharedState, tx: &mpsc::UnboundedSender<Message>, code: &str, session: &str) -> bool {
-    let players = {
+async fn reconnect_player(
+    state: &SharedState,
+    tx: &mpsc::UnboundedSender<Message>,
+    code: &str,
+    session: &str,
+) -> bool {
+    let (player_id, players, current_player_id) = {
         let mut s = state.lock().await;
-        let Some(sref) = s.player_sessions.get(session) else { return false };
-        if sref.code != code { return false }
+        let Some(sref) = s.player_sessions.get(session) else {
+            return false;
+        };
+        if sref.code != code {
+            return false;
+        }
         let player_id = sref.player_id.clone();
-        let Some(lobby) = s.lobbies.get_mut(code) else { return false };
-        let Some(player) = lobby.players.get_mut(&player_id) else { return false };
+        let Some(lobby) = s.lobbies.get_mut(code) else {
+            return false;
+        };
+        let Some(player) = lobby.players.get_mut(&player_id) else {
+            return false;
+        };
 
         player.tx = Some(tx.clone());
         player.disconnected_at = None;
-        lobby_players(lobby)
+        let current_player_id = lobby
+            .current_turn
+            .and_then(|idx| lobby.player_order.get(idx))
+            .cloned();
+        (player_id, lobby_players(lobby), current_player_id)
     };
 
-    let _ = send_to_tx(tx, &ServerMessage::ReconnectOkPlayer {
-        code: code.to_string(),
-        player_session: session.to_string(),
-        players: players.clone(),
-    });
-    broadcast_lobby(state, code, &ServerMessage::LobbyUpdated { code: code.to_string(), players }).await;
+    let _ = send_to_tx(
+        tx,
+        &ServerMessage::ReconnectOkPlayer {
+            code: code.to_string(),
+            player_id,
+            player_session: session.to_string(),
+            players: players.clone(),
+        },
+    );
+    if let Some(current_player_id) = current_player_id {
+        let _ = send_to_tx(tx, &ServerMessage::TurnChanged { current_player_id });
+    }
+    broadcast_lobby(
+        state,
+        code,
+        &ServerMessage::LobbyUpdated {
+            code: code.to_string(),
+            players,
+        },
+    )
+    .await;
     true
 }
 
@@ -353,8 +567,12 @@ async fn disconnect_connection(state: &SharedState, role: &ConnectionRole) {
     match role {
         ConnectionRole::Host { code, session } => {
             let mut s = state.lock().await;
-            let Some(mapped_code) = s.host_sessions.get(session) else { return };
-            if mapped_code != code { return }
+            let Some(mapped_code) = s.host_sessions.get(session) else {
+                return;
+            };
+            if mapped_code != code {
+                return;
+            }
             if let Some(lobby) = s.lobbies.get_mut(code) {
                 lobby.host_tx = None;
                 lobby.host_disconnected_at = Some(now);
@@ -362,8 +580,12 @@ async fn disconnect_connection(state: &SharedState, role: &ConnectionRole) {
         }
         ConnectionRole::Player { code, session } => {
             let mut s = state.lock().await;
-            let Some(sref) = s.player_sessions.get(session) else { return };
-            if sref.code != *code { return }
+            let Some(sref) = s.player_sessions.get(session) else {
+                return;
+            };
+            if sref.code != *code {
+                return;
+            }
             let player_id = sref.player_id.clone();
             if let Some(lobby) = s.lobbies.get_mut(code)
                 && let Some(player) = lobby.players.get_mut(&player_id)
@@ -374,7 +596,16 @@ async fn disconnect_connection(state: &SharedState, role: &ConnectionRole) {
             let players = s.lobbies.get(code).map(lobby_players);
             drop(s);
             if let Some(players) = players {
-                broadcast_lobby(state, code, &ServerMessage::LobbyUpdated { code: code.clone(), players }).await;
+                broadcast_lobby(
+                    state,
+                    code,
+                    &ServerMessage::LobbyUpdated {
+                        code: code.clone(),
+                        players,
+                    },
+                )
+                .await;
+                advance_turn_after_player_change(state, code).await;
             }
         }
     }
@@ -383,7 +614,9 @@ async fn disconnect_connection(state: &SharedState, role: &ConnectionRole) {
 async fn close_lobby(state: &SharedState, code: &str, reason: &str) {
     let (host_tx, player_txs, sessions) = {
         let mut s = state.lock().await;
-        let Some(lobby) = s.lobbies.remove(code) else { return };
+        let Some(lobby) = s.lobbies.remove(code) else {
+            return;
+        };
 
         s.host_sessions.remove(&lobby.host_session);
 
@@ -402,7 +635,9 @@ async fn close_lobby(state: &SharedState, code: &str, reason: &str) {
     };
 
     let _ = sessions;
-    let err = ServerMessage::Error { message: reason.to_string() };
+    let err = ServerMessage::Error {
+        message: reason.to_string(),
+    };
     if let Some(tx) = host_tx {
         let _ = send_to_tx(&tx, &err);
     }
@@ -411,12 +646,79 @@ async fn close_lobby(state: &SharedState, code: &str, reason: &str) {
     }
 }
 
+async fn start_game(state: &SharedState, code: &str) -> Option<String> {
+    let mut s = state.lock().await;
+    let lobby = s.lobbies.get_mut(code)?;
+    let turn_index = next_connected_turn_index(lobby, None)?;
+    lobby.game_in_progress = true;
+    lobby.ball_in_play = false;
+    lobby.current_turn = Some(turn_index);
+    lobby.player_order.get(turn_index).cloned()
+}
+
+async fn relay_throw_event(
+    state: &SharedState,
+    code: &str,
+    session: &str,
+    strength: f32,
+) -> Result<String, String> {
+    let mut s = state.lock().await;
+    let sref = s
+        .player_sessions
+        .get(session)
+        .ok_or_else(|| "player session not found".to_string())?;
+    if sref.code != code {
+        return Err("player is not in this lobby".into());
+    }
+    let player_id = sref.player_id.clone();
+    let lobby = s
+        .lobbies
+        .get_mut(code)
+        .ok_or_else(|| "lobby not found".to_string())?;
+    if !lobby.game_in_progress {
+        return Err("game has not started".into());
+    }
+    if lobby.ball_in_play {
+        return Err("throw already in progress".into());
+    }
+    let Some(current_turn) = lobby.current_turn else {
+        return Err("no active player turn".into());
+    };
+    let Some(active_player_id) = lobby.player_order.get(current_turn) else {
+        return Err("active player not found".into());
+    };
+    if active_player_id != &player_id {
+        return Err("not your turn".into());
+    }
+    if !(0.0..=1.0).contains(&strength) {
+        return Err("throw strength must be between 0 and 1".into());
+    }
+    lobby.ball_in_play = true;
+    Ok(player_id)
+}
+
+async fn advance_turn(state: &SharedState, code: &str) -> Option<String> {
+    let mut s = state.lock().await;
+    let lobby = s.lobbies.get_mut(code)?;
+    if !lobby.game_in_progress {
+        return None;
+    }
+    lobby.ball_in_play = false;
+    // TODO: replace this temporary round-robin turn system with real bowling frame logic.
+    let turn_index = next_connected_turn_index(lobby, lobby.current_turn)?;
+    lobby.current_turn = Some(turn_index);
+    lobby.player_order.get(turn_index).cloned()
+}
+
 async fn remove_player_session(state: &SharedState, code: &str, player_id: &str, session: &str) {
     let (player_tx, players_after) = {
         let mut s = state.lock().await;
         let (player_tx, players_after) = {
-            let Some(lobby) = s.lobbies.get_mut(code) else { return };
+            let Some(lobby) = s.lobbies.get_mut(code) else {
+                return;
+            };
             let player = lobby.players.remove(player_id);
+            lobby.player_order.retain(|id| id != player_id);
             let players_after = lobby_players(lobby);
             (player.and_then(|p| p.tx), players_after)
         };
@@ -425,10 +727,24 @@ async fn remove_player_session(state: &SharedState, code: &str, player_id: &str,
     };
 
     if let Some(tx) = player_tx {
-        let _ = send_to_tx(&tx, &ServerMessage::Error { message: "disconnected: reconnect timeout".into() });
+        let _ = send_to_tx(
+            &tx,
+            &ServerMessage::Error {
+                message: "disconnected: reconnect timeout".into(),
+            },
+        );
     }
 
-    broadcast_lobby(state, code, &ServerMessage::LobbyUpdated { code: code.to_string(), players: players_after }).await;
+    broadcast_lobby(
+        state,
+        code,
+        &ServerMessage::LobbyUpdated {
+            code: code.to_string(),
+            players: players_after,
+        },
+    )
+    .await;
+    advance_turn_after_player_change(state, code).await;
 }
 
 async fn broadcast_lobby(state: &SharedState, code: &str, msg: &ServerMessage) {
@@ -442,7 +758,9 @@ async fn broadcast_lobby(state: &SharedState, code: &str, msg: &ServerMessage) {
 
     let txs = {
         let s = state.lock().await;
-        let Some(lobby) = s.lobbies.get(code) else { return };
+        let Some(lobby) = s.lobbies.get(code) else {
+            return;
+        };
         let mut txs = lobby
             .players
             .values()
@@ -465,10 +783,76 @@ fn send_to_tx(tx: &mpsc::UnboundedSender<Message>, msg: &ServerMessage) -> Resul
 }
 
 fn lobby_players(lobby: &Lobby) -> Vec<PlayerInfo> {
-    lobby.players.values().map(|p| PlayerInfo {
-        username: p.username.clone(),
-        connected: p.tx.is_some(),
-    }).collect()
+    lobby
+        .player_order
+        .iter()
+        .filter_map(|player_id| {
+            lobby.players.get(player_id).map(|p| PlayerInfo {
+                player_id: player_id.clone(),
+                username: p.username.clone(),
+                connected: p.tx.is_some(),
+            })
+        })
+        .collect()
+}
+
+fn next_connected_turn_index(lobby: &Lobby, current_turn: Option<usize>) -> Option<usize> {
+    if lobby.player_order.is_empty() {
+        return None;
+    }
+
+    let start = current_turn.map_or(0, |idx| idx.saturating_add(1));
+    for offset in 0..lobby.player_order.len() {
+        let idx = (start + offset) % lobby.player_order.len();
+        let Some(player_id) = lobby.player_order.get(idx) else {
+            continue;
+        };
+        let Some(player) = lobby.players.get(player_id) else {
+            continue;
+        };
+        if player.tx.is_some() {
+            return Some(idx);
+        }
+    }
+
+    None
+}
+
+async fn advance_turn_after_player_change(state: &SharedState, code: &str) {
+    let current_player_id = {
+        let mut s = state.lock().await;
+        let Some(lobby) = s.lobbies.get_mut(code) else {
+            return;
+        };
+        if !lobby.game_in_progress || lobby.ball_in_play {
+            return;
+        }
+
+        let active_connected = lobby
+            .current_turn
+            .and_then(|idx| lobby.player_order.get(idx))
+            .and_then(|player_id| lobby.players.get(player_id))
+            .is_some_and(|player| player.tx.is_some());
+        if active_connected {
+            return;
+        }
+
+        let Some(next_turn) = next_connected_turn_index(lobby, lobby.current_turn) else {
+            lobby.current_turn = None;
+            return;
+        };
+        lobby.current_turn = Some(next_turn);
+        lobby.player_order.get(next_turn).cloned()
+    };
+
+    if let Some(current_player_id) = current_player_id {
+        broadcast_lobby(
+            state,
+            code,
+            &ServerMessage::TurnChanged { current_player_id },
+        )
+        .await;
+    }
 }
 
 fn new_lobby_code(state: &AppState) -> String {

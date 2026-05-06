@@ -20,6 +20,10 @@ pub enum ClientMessage {
     },
     Leave,
     StartGame,
+    ThrowEvent {
+        strength: f32,
+    },
+    AdvanceTurn,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +36,7 @@ pub enum ServerMessage {
     },
     LobbyJoined {
         code: String,
+        player_id: String,
         player_session: String,
         players: Vec<PlayerInfo>,
     },
@@ -45,11 +50,20 @@ pub enum ServerMessage {
     },
     ReconnectOkPlayer {
         code: String,
+        player_id: String,
         player_session: String,
         players: Vec<PlayerInfo>,
     },
     GameStarted {
         code: String,
+        current_player_id: String,
+    },
+    TurnChanged {
+        current_player_id: String,
+    },
+    ThrowEvent {
+        player_id: String,
+        strength: f32,
     },
     Info {
         message: String,
@@ -61,6 +75,7 @@ pub enum ServerMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerInfo {
+    pub player_id: String,
     pub username: String,
     pub connected: bool,
 }

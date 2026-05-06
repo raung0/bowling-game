@@ -20,5 +20,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.182, 0.1, 0)
 transform = Transform3D(-3.7855173e-08, 0.5, -0.8660254, 2.1855694e-08, 0.8660254, 0.5, 1, 0, -4.371139e-08, 6.889805, 0.99437046, 0)
 current = true
 
+[node name="BallStartPoint" type="Node3D" parent="." unique_id=1695478958]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.3262863, 0.13879558, -0.057415247)
+
+[node name="BallEndPoint" type="Node3D" parent="." unique_id=1237491589]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.4, 0.13879558, -0.057415247)
+
 [node name="BowlingBall" parent="." unique_id=1800342674 instance=ExtResource("4_sb48q")]
+track_start = NodePath("../BallStartPoint")
+track_end = NodePath("../BallEndPoint")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.3262863, 0.13879558, -0.057415247)

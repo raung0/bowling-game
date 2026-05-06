@@ -1,7 +1,4 @@
-use godot::{
-    classes::{Input, RigidBody3D},
-    prelude::*,
-};
+use godot::{classes::RigidBody3D, prelude::*};
 
 #[derive(GodotClass)]
 #[class(base=Node3D)]
@@ -9,10 +6,10 @@ pub struct Ball {
     base: Base<Node3D>,
 
     #[export]
-    track_start: Option<Gd<Node3D>>,
+    track_start: NodePath,
 
     #[export]
-    track_end: Option<Gd<Node3D>>,
+    track_end: NodePath,
 
     #[export]
     speed: f32,
@@ -28,8 +25,8 @@ impl INode3D for Ball {
     fn init(base: Base<Node3D>) -> Self {
         Self {
             base,
-            track_start: None,
-            track_end: None,
+            track_start: NodePath::default(),
+            track_end: NodePath::default(),
             speed: 5.0,
             reset_when_past_end: true,
             launched: false,
@@ -41,17 +38,11 @@ impl INode3D for Ball {
     }
 
     fn physics_process(&mut self, _delta: f64) {
-        let input = Input::singleton();
-
-        if input.is_action_just_pressed("ui_accept") {
-            self.launch();
-        }
-
         if !self.launched {
             return;
         }
 
-        let Some(end) = self.track_end.as_ref() else {
+        let Some(end) = self.track_end_node() else {
             return;
         };
 
@@ -72,11 +63,26 @@ impl Ball {
         self.base().get_node_as::<RigidBody3D>("RigidBody3D")
     }
 
+    fn track_start_node(&self) -> Option<Gd<Node3D>> {
+        if self.track_start.is_empty() {
+            return None;
+        }
+        Some(self.base().get_node_as::<Node3D>(&self.track_start))
+    }
+
+    fn track_end_node(&self) -> Option<Gd<Node3D>> {
+        if self.track_end.is_empty() {
+            return None;
+        }
+        Some(self.base().get_node_as::<Node3D>(&self.track_end))
+    }
+
     #[func]
-    pub fn launch(&mut self) {
+    pub fn launch_with_strength(&mut self, strength: f32) {
         self.launched = true;
 
-        let speed = self.speed;
+        let strength = strength.clamp(0.0, 1.0);
+        let speed = 1.5 + self.speed * strength;
         let mut rb = self.rigidbody();
 
         rb.set_linear_velocity(Vector3::new(speed, 0.0, 0.0));
@@ -86,7 +92,9 @@ impl Ball {
 
     #[func]
     pub fn reset_ball(&mut self) {
-        let Some(start) = self.track_start.as_ref() else {
+        self.launched = false;
+
+        let Some(start) = self.track_start_node() else {
             return;
         };
 
@@ -101,11 +109,11 @@ impl Ball {
 
     #[func]
     pub fn track_progress(&self) -> f32 {
-        let Some(start) = self.track_start.as_ref() else {
+        let Some(start) = self.track_start_node() else {
             return 0.0;
         };
 
-        let Some(end) = self.track_end.as_ref() else {
+        let Some(end) = self.track_end_node() else {
             return 0.0;
         };
 
@@ -116,5 +124,10 @@ impl Ball {
         let ball_x = rb.get_global_position().x;
 
         ((ball_x - start_x) / (end_x - start_x)).clamp(0.0, 1.0)
+    }
+
+    #[func]
+    pub fn is_launched(&self) -> bool {
+        self.launched
     }
 }

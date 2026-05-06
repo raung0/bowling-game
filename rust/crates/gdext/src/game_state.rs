@@ -2,13 +2,15 @@ use common::{ClientMessage, PlayerInfo, ServerMessage};
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{Button, Label, LineEdit, Node, VBoxContainer, WebSocketPeer},
+    classes::{Button, Label, LineEdit, Node, ProgressBar, VBoxContainer, WebSocketPeer},
     global::Error,
     prelude::*,
 };
 use rand::Rng;
 use std::str::FromStr;
 
+use crate::ball::Ball;
+use crate::game_manager::GameManager;
 use crate::ui_manager::UiManager;
 
 const STORAGE_ROLE: &str = "session_role";
@@ -24,9 +26,10 @@ pub enum Screen {
     Host,
     Info,
     Game,
+    Controller,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SessionRole {
     Host,
     Player,
@@ -45,6 +48,15 @@ pub struct GameState {
     ws: Option<Gd<WebSocketPeer>>,
     pending_messages: Vec<String>,
     pending_connect_secs: f64,
+    session_role: Option<SessionRole>,
+    player_id: String,
+    lobby_code: String,
+    players: Vec<PlayerInfo>,
+    current_player_id: String,
+    controller_holding: bool,
+    controller_peak_strength: f32,
+    controller_start_accel: Vector3,
+    host_ball_was_launched: bool,
 
     base: Base<Node>,
 }
@@ -61,6 +73,15 @@ impl INode for GameState {
             ws: None,
             pending_messages: Vec::new(),
             pending_connect_secs: 0.0,
+            session_role: None,
+            player_id: String::new(),
+            lobby_code: String::new(),
+            players: Vec::new(),
+            current_player_id: String::new(),
+            controller_holding: false,
+            controller_peak_strength: 0.0,
+            controller_start_accel: Vector3::ZERO,
+            host_ball_was_launched: false,
         }
     }
 
@@ -78,12 +99,17 @@ impl INode for GameState {
         );
         let mut back_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back");
         let mut start_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Start");
+        let mut hold_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         create_button.connect("pressed", &self.base().callable("on_create_pressed"));
         spectate_button.connect("pressed", &self.base().callable("on_spectate_pressed"));
         back_button.connect("pressed", &self.base().callable("on_back_pressed"));
         start_button.connect("pressed", &self.base().callable("on_start_pressed"));
+        hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
+        hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
 
         self.ensure_username();
         self.try_auto_reconnect();
@@ -93,6 +119,71 @@ impl INode for GameState {
         self.accel = self.browser_accel();
         self.is_mobile = self.is_mobile_web();
 
+        self.poll_socket();
+        self.handle_socket_connect_timeout(delta);
+        self.update_controller_strength();
+        self.maybe_finish_host_throw();
+
+        let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
+        ui_manager
+            .bind_mut()
+            .set_screen(self.screen, self.is_mobile);
+
+        self.render_mobile_accel();
+        self.render_controller_ui();
+        self.render_game_ui();
+        self.render_info_text();
+    }
+}
+
+impl GameState {
+    fn is_host(&self) -> bool {
+        self.session_role == Some(SessionRole::Host)
+    }
+
+    fn gameplay_screen(&self) -> Screen {
+        if self.is_mobile && self.session_role == Some(SessionRole::Player) {
+            Screen::Controller
+        } else {
+            Screen::Game
+        }
+    }
+
+    fn is_local_player_turn(&self) -> bool {
+        !self.player_id.is_empty() && self.player_id == self.current_player_id
+    }
+
+    fn current_player_name(&self) -> String {
+        self.players
+            .iter()
+            .find(|player| player.player_id == self.current_player_id)
+            .map(|player| player.username.clone())
+            .unwrap_or_else(|| "Waiting for player".to_string())
+    }
+
+    fn try_ball(&self) -> Option<Gd<Ball>> {
+        self.base()
+            .get_node_or_null("GameManager/BowlingBall")
+            .and_then(|node| node.try_cast::<Ball>().ok())
+    }
+
+    fn try_game_manager(&self) -> Option<Gd<GameManager>> {
+        self.base()
+            .get_node_or_null("GameManager")
+            .and_then(|node| node.try_cast::<GameManager>().ok())
+    }
+
+    fn reset_lane_for_turn(&mut self) {
+        if let Some(mut game_manager) = self.try_game_manager() {
+            game_manager.bind_mut().spawn_pins();
+        }
+        if let Some(mut ball) = self.try_ball() {
+            ball.bind_mut().reset_ball();
+        }
+        self.host_ball_was_launched = false;
+    }
+
+    fn render_mobile_accel(&mut self) {
         let mut accel_label = self
             .base_mut()
             .get_node_as::<Label>("UiManager/Mobile/VBoxContainer/Accel");
@@ -100,19 +191,93 @@ impl INode for GameState {
             "Accel: x={:.2} y={:.2} z={:.2}",
             self.accel.x, self.accel.y, self.accel.z
         ));
-
-        let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
-        ui_manager
-            .bind_mut()
-            .set_screen(self.screen, self.is_mobile);
-
-        self.poll_socket();
-        self.handle_socket_connect_timeout(delta);
-        self.render_info_text();
     }
-}
 
-impl GameState {
+    fn render_controller_ui(&mut self) {
+        let status = if self.current_player_id.is_empty() {
+            "Waiting for host...".to_string()
+        } else if self.is_local_player_turn() {
+            if self.controller_holding {
+                "Throw now, then let go to release".to_string()
+            } else {
+                "Your turn - hold to throw".to_string()
+            }
+        } else {
+            format!("Waiting for {}", self.current_player_name())
+        };
+
+        let mut status_label = self
+            .base_mut()
+            .get_node_as::<Label>("UiManager/Controller/MarginContainer/VBoxContainer/Status");
+        status_label.set_text(&GString::from(status.as_str()));
+
+        let mut strength_label = self.base_mut().get_node_as::<Label>(
+            "UiManager/Controller/MarginContainer/VBoxContainer/StrengthLabel",
+        );
+        strength_label.set_text(&format!(
+            "Strength: {:.0}%",
+            self.controller_peak_strength * 100.0
+        ));
+
+        let mut strength_bar = self.base_mut().get_node_as::<ProgressBar>(
+            "UiManager/Controller/MarginContainer/VBoxContainer/StrengthBar",
+        );
+        strength_bar.set_value((self.controller_peak_strength * 100.0) as f64);
+
+        let mut hold_button = self
+            .base_mut()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
+        hold_button.set_disabled(!self.is_local_player_turn());
+    }
+
+    fn render_game_ui(&mut self) {
+        let current_player = if self.current_player_id.is_empty() {
+            "Current turn: waiting for player".to_string()
+        } else {
+            format!("Current turn: {}", self.current_player_name())
+        };
+
+        let mut turn_label = self
+            .base_mut()
+            .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/TurnLabel");
+        turn_label.set_text(&GString::from(current_player.as_str()));
+
+        let lobby_line = if self.lobby_code.is_empty() {
+            "Lobby: -".to_string()
+        } else {
+            format!("Lobby: {}", self.lobby_code)
+        };
+        let mut lobby_label = self
+            .base_mut()
+            .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/LobbyLabel");
+        lobby_label.set_text(&GString::from(lobby_line.as_str()));
+    }
+
+    fn update_controller_strength(&mut self) {
+        if !self.controller_holding {
+            return;
+        }
+
+        let delta = (self.accel - self.controller_start_accel).length();
+        let normalized = (delta / 18.0).clamp(0.0, 1.0);
+        self.controller_peak_strength = self.controller_peak_strength.max(normalized);
+    }
+
+    fn maybe_finish_host_throw(&mut self) {
+        if !self.is_host() {
+            return;
+        }
+
+        let Some(ball) = self.try_ball() else { return };
+        let launched = ball.bind().is_launched();
+        if self.host_ball_was_launched && !launched {
+            self.host_ball_was_launched = false;
+            self.send_message(ClientMessage::AdvanceTurn);
+            return;
+        }
+        self.host_ball_was_launched = launched;
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn browser_accel(&self) -> Vector3 {
         let Some(mut bridge) = self.base().get_node_or_null("WebBridge") else {
@@ -308,34 +473,80 @@ impl GameState {
                 host_session,
                 players,
             } => {
+                self.session_role = Some(SessionRole::Host);
+                self.lobby_code = code.clone();
                 self.persist_role_session(SessionRole::Host, &code, &host_session);
                 self.update_lobby_ui(&code, &players);
                 self.screen = Screen::Host;
             }
             ServerMessage::LobbyJoined {
                 code,
+                player_id,
                 player_session,
                 players,
             } => {
+                self.session_role = Some(SessionRole::Player);
+                self.player_id = player_id;
+                self.lobby_code = code.clone();
                 self.persist_role_session(SessionRole::Player, &code, &player_session);
                 self.update_lobby_ui(&code, &players);
-                self.screen = Screen::Host;
+                self.info_text = format!("Joined lobby {code}. Waiting for host to start...");
+                self.screen = Screen::Info;
             }
             ServerMessage::ReconnectOkHost { code, players } => {
+                self.session_role = Some(SessionRole::Host);
+                self.lobby_code = code.clone();
                 self.update_lobby_ui(&code, &players);
                 self.screen = Screen::Host;
             }
             ServerMessage::ReconnectOkPlayer {
                 code,
+                player_id,
                 player_session,
                 players,
             } => {
+                self.session_role = Some(SessionRole::Player);
+                self.player_id = player_id;
+                self.lobby_code = code.clone();
                 self.persist_role_session(SessionRole::Player, &code, &player_session);
                 self.update_lobby_ui(&code, &players);
-                self.screen = Screen::Host;
+                self.screen = self.gameplay_screen();
             }
             ServerMessage::LobbyUpdated { code, players } => {
                 self.update_lobby_ui(&code, &players);
+            }
+            ServerMessage::GameStarted {
+                code,
+                current_player_id,
+            } => {
+                self.lobby_code = code;
+                self.current_player_id = current_player_id;
+                if self.is_host() {
+                    self.reset_lane_for_turn();
+                }
+                self.screen = self.gameplay_screen();
+            }
+            ServerMessage::TurnChanged { current_player_id } => {
+                self.current_player_id = current_player_id;
+                self.controller_holding = false;
+                self.controller_peak_strength = 0.0;
+                if self.is_host() {
+                    self.reset_lane_for_turn();
+                }
+                self.screen = self.gameplay_screen();
+            }
+            ServerMessage::ThrowEvent {
+                player_id: _,
+                strength,
+            } => {
+                self.controller_holding = false;
+                self.controller_peak_strength = 0.0;
+                if self.is_host()
+                    && let Some(mut ball) = self.try_ball()
+                {
+                    ball.bind_mut().launch_with_strength(strength);
+                    self.host_ball_was_launched = true;
+                }
             }
             ServerMessage::Info { message } => {
                 self.info_text = message;
@@ -343,16 +554,20 @@ impl GameState {
             }
             ServerMessage::Error { message } => {
                 self.info_text = format!("Error: {message}");
+                self.controller_holding = false;
+                self.controller_peak_strength = 0.0;
                 self.clear_session_keys();
+                self.session_role = None;
+                self.player_id.clear();
+                self.current_player_id.clear();
                 self.screen = Screen::MainMenu;
-            }
-            ServerMessage::GameStarted { .. } => {
-                self.screen = Screen::Game;
             }
         }
     }
 
     fn update_lobby_ui(&mut self, code: &str, players: &[PlayerInfo]) {
+        self.lobby_code = code.to_string();
+        self.players = players.to_vec();
         let mut room_code = self.base_mut().get_node_as::<Label>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/RoomCodeValue");
         room_code.set_text(&GString::from(code));
 
@@ -409,14 +624,17 @@ impl GameState {
             return;
         }
 
+        self.lobby_code = code.clone();
         self.screen = Screen::Info;
         if role == "host" {
+            self.session_role = Some(SessionRole::Host);
             self.info_text = "Reconnecting as host...".to_string();
             self.send_message(ClientMessage::ReconnectHost {
                 code,
                 host_session: token,
             });
         } else if role == "player" {
+            self.session_role = Some(SessionRole::Player);
             self.info_text = "Reconnecting as player...".to_string();
             self.send_message(ClientMessage::ReconnectPlayer {
                 code,
@@ -523,6 +741,13 @@ impl GameState {
     fn on_back_pressed(&mut self) {
         self.send_message(ClientMessage::Leave);
         self.clear_session_keys();
+        self.session_role = None;
+        self.player_id.clear();
+        self.lobby_code.clear();
+        self.players.clear();
+        self.current_player_id.clear();
+        self.controller_holding = false;
+        self.controller_peak_strength = 0.0;
         self.screen = Screen::MainMenu;
     }
 
@@ -531,5 +756,30 @@ impl GameState {
         self.send_message(ClientMessage::StartGame);
         self.info_text = "Starting game...".to_string();
         self.screen = Screen::Info;
+    }
+
+    #[func]
+    fn on_hold_button_down(&mut self) {
+        if !self.is_local_player_turn() {
+            return;
+        }
+
+        self.controller_holding = true;
+        self.controller_peak_strength = 0.0;
+        self.controller_start_accel = self.accel;
+    }
+
+    #[func]
+    fn on_hold_button_up(&mut self) {
+        if !self.controller_holding {
+            return;
+        }
+
+        self.controller_holding = false;
+        let strength = self.controller_peak_strength.clamp(0.0, 1.0);
+        self.controller_peak_strength = 0.0;
+        if self.is_local_player_turn() {
+            self.send_message(ClientMessage::ThrowEvent { strength });
+        }
     }
 }

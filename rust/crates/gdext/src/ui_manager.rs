@@ -28,8 +28,12 @@ impl UiManager {
             .base_mut()
             .get_node_as::<Control>("CenterContainer/VBoxContainer/DesktopHost");
         let mut info = self.base_mut().get_node_as::<Control>("Info");
+        let mut controller = self.base_mut().get_node_as::<Control>("Controller");
+        let mut game_hud = self.base_mut().get_node_as::<Control>("GameHud");
         match s {
             Screen::MainMenu => {
+                controller.set_visible(false);
+                game_hud.set_visible(false);
                 if is_mobile {
                     desktop.set_visible(false);
                     desktop_host.set_visible(false);
@@ -47,18 +51,32 @@ impl UiManager {
                 desktop_host.set_visible(true);
                 info.set_visible(false);
                 mobile.set_visible(false);
+                controller.set_visible(false);
+                game_hud.set_visible(false);
             }
             Screen::Info => {
                 desktop.set_visible(false);
                 desktop_host.set_visible(false);
                 mobile.set_visible(false);
                 info.set_visible(true);
+                controller.set_visible(false);
+                game_hud.set_visible(false);
             }
             Screen::Game => {
                 desktop.set_visible(false);
                 desktop_host.set_visible(false);
                 mobile.set_visible(false);
                 info.set_visible(false);
+                controller.set_visible(false);
+                game_hud.set_visible(true);
+            }
+            Screen::Controller => {
+                desktop.set_visible(false);
+                desktop_host.set_visible(false);
+                mobile.set_visible(false);
+                info.set_visible(false);
+                controller.set_visible(true);
+                game_hud.set_visible(false);
             }
         }
     }
