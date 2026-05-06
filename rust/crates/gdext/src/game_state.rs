@@ -134,12 +134,12 @@ impl INode for GameState {
         let mut controller_back_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/BackToMenu");
-        let mut game_kick_button = self
-            .base()
-            .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow/KickButton");
-        let mut game_stop_button = self
-            .base()
-            .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton");
+        let mut game_kick_button = self.base().get_node_as::<Button>(
+            "UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow/KickButton",
+        );
+        let mut game_stop_button = self.base().get_node_as::<Button>(
+            "UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton",
+        );
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
@@ -324,14 +324,14 @@ impl GameState {
             .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/LobbyLabel");
         lobby_label.set_text(&GString::from(lobby_line.as_str()));
 
-        let mut host_kick_row = self
-            .base_mut()
-            .get_node_as::<HBoxContainer>("UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow");
+        let mut host_kick_row = self.base_mut().get_node_as::<HBoxContainer>(
+            "UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow",
+        );
         host_kick_row.set_visible(self.is_host());
 
-        let mut stop_game_button = self
-            .base_mut()
-            .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton");
+        let mut stop_game_button = self.base_mut().get_node_as::<Button>(
+            "UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton",
+        );
         stop_game_button.set_visible(self.is_host());
 
         self.render_scoreboard();
@@ -1228,8 +1228,14 @@ impl GameState {
             return;
         }
         if self.is_local_player_turn() {
-            let corrected =
-                Vector2::new(direction.x - self.calibration_offset_x, direction.y).normalized();
+            let mut corrected_x = direction.x - self.calibration_offset_x;
+
+            if corrected_x.abs() < BOWLING_SIDEWAYS_DEADZONE {
+                corrected_x = 0.0;
+            }
+
+            let corrected = Vector2::new(-corrected_x, direction.y).normalized();
+
             self.send_message(ClientMessage::ThrowEvent {
                 force,
                 direction_x: corrected.x,

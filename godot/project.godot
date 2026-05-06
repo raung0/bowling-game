@@ -33,6 +33,7 @@ enabled=PackedStringArray("res://addons/phantom_camera/plugin.cfg")
 [physics]
 
 3d/physics_engine="GodotPhysics3D"
+common/physics_interpolation=true
 
 [rendering]
 
