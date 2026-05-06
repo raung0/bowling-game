@@ -147,6 +147,7 @@ text = "Loading..."
 horizontal_alignment = 1
 
 [node name="GameHud" type="Control" parent="." unique_id=726381145]
+visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -240,7 +241,6 @@ layout_mode = 2
 theme_override_constants/separation = 6
 
 [node name="Controller" type="Control" parent="." unique_id=2107224770]
-visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -295,6 +295,36 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 28
 text = "Leave Lobby"
+
+[node name="Move" type="HBoxContainer" parent="Controller/MarginContainer/VBoxContainer" unique_id=1141383439]
+layout_mode = 2
+
+[node name="Left" type="Button" parent="Controller/MarginContainer/VBoxContainer/Move" unique_id=422742695]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 32
+text = "Move left"
+
+[node name="Right" type="Button" parent="Controller/MarginContainer/VBoxContainer/Move" unique_id=353329132]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 32
+text = "Move right"
+
+[node name="Rotate" type="HBoxContainer" parent="Controller/MarginContainer/VBoxContainer" unique_id=927625383]
+layout_mode = 2
+
+[node name="Left" type="Button" parent="Controller/MarginContainer/VBoxContainer/Rotate" unique_id=448989526]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 32
+text = "Rotate left"
+
+[node name="Right" type="Button" parent="Controller/MarginContainer/VBoxContainer/Rotate" unique_id=779842829]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 32
+text = "Rotate right"
 
 [node name="Mobile" type="Control" parent="." unique_id=585124077]
 visible = false

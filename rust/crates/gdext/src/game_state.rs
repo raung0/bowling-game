@@ -26,7 +26,7 @@ const MOTION_BASELINE_SAMPLES: usize = 4;
 const MOTION_PEAK_WINDOW_SAMPLES: usize = 3;
 const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
 const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
-const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.2;
+const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.08;
 const CALIBRATION_THROW_COUNT: usize = 3;
 
 #[derive(Clone, Copy, Default)]
@@ -1197,7 +1197,7 @@ impl GameState {
         self.controller_holding = true;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_baseline_accel = self.accel;
+        //self.controller_baseline_accel = self.accel;
         self.controller_motion_history.clear();
         self.controller_motion_history.push_back(self.accel);
     }
@@ -1228,13 +1228,10 @@ impl GameState {
             return;
         }
         if self.is_local_player_turn() {
-            let mut corrected_x = direction.x - self.calibration_offset_x;
+            let corrected_x = direction.x - self.calibration_offset_x;
+            let corrected_x = soft_deadzone(corrected_x, BOWLING_SIDEWAYS_DEADZONE);
 
-            if corrected_x.abs() < BOWLING_SIDEWAYS_DEADZONE {
-                corrected_x = 0.0;
-            }
-
-            let corrected = Vector2::new(-corrected_x, direction.y).normalized();
+            let corrected = Vector2::new(corrected_x, direction.y).normalized();
 
             self.send_message(ClientMessage::ThrowEvent {
                 force,
@@ -1246,13 +1243,27 @@ impl GameState {
 
     #[func]
     fn on_calibrate_pressed(&mut self) {
+        if !self.current_player_id.is_empty() {
+            return;
+        }
+
         self.calibration_active = true;
         self.calibration_samples.clear();
         self.controller_holding = false;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_baseline_accel = Vector3::ZERO;
+        //self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
         self.screen = Screen::Controller;
     }
+}
+
+fn soft_deadzone(value: f32, deadzone: f32) -> f32 {
+    let abs = value.abs();
+
+    if abs <= deadzone {
+        return 0.0;
+    }
+
+    value.signum() * ((abs - deadzone) / (1.0 - deadzone)).clamp(0.0, 1.0)
 }
