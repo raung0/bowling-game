@@ -377,16 +377,31 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     );
                 }
             }
-            ClientMessage::ThrowEvent { strength } => {
+            ClientMessage::ThrowEvent {
+                force,
+                direction_x,
+                direction_z,
+            } => {
                 if let Some(ConnectionRole::Player { code, session }) = role.clone() {
-                    match relay_throw_event(&state, &code, &session, strength).await {
+                    match relay_throw_event(
+                        &state,
+                        &code,
+                        &session,
+                        force,
+                        direction_x,
+                        direction_z,
+                    )
+                    .await
+                    {
                         Ok(player_id) => {
                             broadcast_lobby(
                                 &state,
                                 &code,
                                 &ServerMessage::ThrowEvent {
                                     player_id,
-                                    strength,
+                                    force,
+                                    direction_x,
+                                    direction_z,
                                 },
                             )
                             .await;
@@ -660,7 +675,9 @@ async fn relay_throw_event(
     state: &SharedState,
     code: &str,
     session: &str,
-    strength: f32,
+    force: f32,
+    direction_x: f32,
+    direction_z: f32,
 ) -> Result<String, String> {
     let mut s = state.lock().await;
     let sref = s
@@ -690,8 +707,15 @@ async fn relay_throw_event(
     if active_player_id != &player_id {
         return Err("not your turn".into());
     }
-    if !(0.0..=1.0).contains(&strength) {
-        return Err("throw strength must be between 0 and 1".into());
+    if !(0.0..=1.0).contains(&force) {
+        return Err("throw force must be between 0 and 1".into());
+    }
+    if !direction_x.is_finite() || !direction_z.is_finite() {
+        return Err("throw direction must be finite".into());
+    }
+    let direction_len = (direction_x * direction_x + direction_z * direction_z).sqrt();
+    if !(0.5..=1.5).contains(&direction_len) {
+        return Err("throw direction must be normalized".into());
     }
     lobby.ball_in_play = true;
     Ok(player_id)

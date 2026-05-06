@@ -21,7 +21,9 @@ pub enum ClientMessage {
     Leave,
     StartGame,
     ThrowEvent {
-        strength: f32,
+        force: f32,
+        direction_x: f32,
+        direction_z: f32,
     },
     AdvanceTurn,
 }
@@ -63,7 +65,9 @@ pub enum ServerMessage {
     },
     ThrowEvent {
         player_id: String,
-        strength: f32,
+        force: f32,
+        direction_x: f32,
+        direction_z: f32,
     },
     Info {
         message: String,

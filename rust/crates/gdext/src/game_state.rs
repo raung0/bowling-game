@@ -7,7 +7,7 @@ use godot::{
     prelude::*,
 };
 use rand::Rng;
-use std::str::FromStr;
+use std::{collections::VecDeque, str::FromStr};
 
 use crate::ball::Ball;
 use crate::game_manager::GameManager;
@@ -18,6 +18,9 @@ const STORAGE_TOKEN: &str = "session_token";
 const STORAGE_CODE: &str = "lobby_code";
 const STORAGE_USERNAME: &str = "username";
 const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
+const MOTION_HISTORY_LIMIT: usize = 12;
+const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
+const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
 
 #[derive(Clone, Copy, Default)]
 pub enum Screen {
@@ -54,8 +57,9 @@ pub struct GameState {
     players: Vec<PlayerInfo>,
     current_player_id: String,
     controller_holding: bool,
-    controller_peak_strength: f32,
-    controller_start_accel: Vector3,
+    controller_force: f32,
+    controller_direction: Vector2,
+    controller_motion_history: VecDeque<Vector3>,
     host_ball_was_launched: bool,
 
     base: Base<Node>,
@@ -79,8 +83,9 @@ impl INode for GameState {
             players: Vec::new(),
             current_player_id: String::new(),
             controller_holding: false,
-            controller_peak_strength: 0.0,
-            controller_start_accel: Vector3::ZERO,
+            controller_force: 0.0,
+            controller_direction: Vector2::new(0.0, 1.0),
+            controller_motion_history: VecDeque::with_capacity(MOTION_HISTORY_LIMIT),
             host_ball_was_launched: false,
         }
     }
@@ -215,14 +220,16 @@ impl GameState {
             "UiManager/Controller/MarginContainer/VBoxContainer/StrengthLabel",
         );
         strength_label.set_text(&format!(
-            "Strength: {:.0}%",
-            self.controller_peak_strength * 100.0
+            "Force: {:.0}%  Dir: ({:.2}, {:.2})",
+            self.controller_force * 100.0,
+            self.controller_direction.x,
+            self.controller_direction.y,
         ));
 
         let mut strength_bar = self.base_mut().get_node_as::<ProgressBar>(
             "UiManager/Controller/MarginContainer/VBoxContainer/StrengthBar",
         );
-        strength_bar.set_value((self.controller_peak_strength * 100.0) as f64);
+        strength_bar.set_value((self.controller_force * 100.0) as f64);
 
         let mut hold_button = self
             .base_mut()
@@ -258,9 +265,49 @@ impl GameState {
             return;
         }
 
-        let delta = (self.accel - self.controller_start_accel).length();
-        let normalized = (delta / 18.0).clamp(0.0, 1.0);
-        self.controller_peak_strength = self.controller_peak_strength.max(normalized);
+        if self.controller_motion_history.len() == MOTION_HISTORY_LIMIT {
+            self.controller_motion_history.pop_front();
+        }
+        self.controller_motion_history.push_back(self.accel);
+        let (force, direction) = self.estimate_throw_from_history();
+        self.controller_force = force;
+        self.controller_direction = direction;
+    }
+
+    fn estimate_throw_from_history(&self) -> (f32, Vector2) {
+        if self.controller_motion_history.is_empty() {
+            return (0.0, Vector2::new(0.0, 1.0));
+        }
+
+        let mut best_forward = 0.0_f32;
+        let mut best_sideways = 0.0_f32;
+        let mut last = None;
+        for sample in &self.controller_motion_history {
+            let smoothed = if let Some(prev) = last {
+                (*sample + prev) * 0.5
+            } else {
+                *sample
+            };
+            last = Some(*sample);
+
+            let sideways = -smoothed.x;
+            let forward = (-smoothed.y).max(0.0);
+            if forward > best_forward {
+                best_forward = forward;
+                best_sideways = sideways;
+            }
+        }
+
+        if best_forward <= 0.0 {
+            return (0.0, Vector2::new(0.0, 1.0));
+        }
+
+        let max_sideways = best_forward * BOWLING_SWING_MAX_ANGLE_DEG.to_radians().tan();
+        let clamped_sideways = best_sideways.clamp(-max_sideways, max_sideways);
+        let direction = Vector2::new(clamped_sideways, best_forward).normalized();
+        let force = ((best_forward - BOWLING_SWING_MIN_FORCE) / 8.0).clamp(0.0, 1.0);
+
+        (force, direction)
     }
 
     fn maybe_finish_host_throw(&mut self) {
@@ -529,7 +576,9 @@ impl GameState {
             ServerMessage::TurnChanged { current_player_id } => {
                 self.current_player_id = current_player_id;
                 self.controller_holding = false;
-                self.controller_peak_strength = 0.0;
+                self.controller_force = 0.0;
+                self.controller_direction = Vector2::new(0.0, 1.0);
+                self.controller_motion_history.clear();
                 if self.is_host() {
                     self.reset_lane_for_turn();
                 }
@@ -537,14 +586,19 @@ impl GameState {
             }
             ServerMessage::ThrowEvent {
                 player_id: _,
-                strength,
+                force,
+                direction_x,
+                direction_z,
             } => {
                 self.controller_holding = false;
-                self.controller_peak_strength = 0.0;
+                self.controller_force = 0.0;
+                self.controller_direction = Vector2::new(0.0, 1.0);
+                self.controller_motion_history.clear();
                 if self.is_host()
                     && let Some(mut ball) = self.try_ball()
                 {
-                    ball.bind_mut().launch_with_strength(strength);
+                    ball.bind_mut()
+                        .launch_throw(force, direction_x, direction_z);
                     self.host_ball_was_launched = true;
                 }
             }
@@ -555,7 +609,9 @@ impl GameState {
             ServerMessage::Error { message } => {
                 self.info_text = format!("Error: {message}");
                 self.controller_holding = false;
-                self.controller_peak_strength = 0.0;
+                self.controller_force = 0.0;
+                self.controller_direction = Vector2::new(0.0, 1.0);
+                self.controller_motion_history.clear();
                 self.clear_session_keys();
                 self.session_role = None;
                 self.player_id.clear();
@@ -747,7 +803,9 @@ impl GameState {
         self.players.clear();
         self.current_player_id.clear();
         self.controller_holding = false;
-        self.controller_peak_strength = 0.0;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_motion_history.clear();
         self.screen = Screen::MainMenu;
     }
 
@@ -765,8 +823,10 @@ impl GameState {
         }
 
         self.controller_holding = true;
-        self.controller_peak_strength = 0.0;
-        self.controller_start_accel = self.accel;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_motion_history.clear();
+        self.controller_motion_history.push_back(self.accel);
     }
 
     #[func]
@@ -776,10 +836,17 @@ impl GameState {
         }
 
         self.controller_holding = false;
-        let strength = self.controller_peak_strength.clamp(0.0, 1.0);
-        self.controller_peak_strength = 0.0;
+        let force = self.controller_force.clamp(0.0, 1.0);
+        let direction = self.controller_direction;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_motion_history.clear();
         if self.is_local_player_turn() {
-            self.send_message(ClientMessage::ThrowEvent { strength });
+            self.send_message(ClientMessage::ThrowEvent {
+                force,
+                direction_x: direction.x,
+                direction_z: direction.y,
+            });
         }
     }
 }

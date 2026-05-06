@@ -78,15 +78,18 @@ impl Ball {
     }
 
     #[func]
-    pub fn launch_with_strength(&mut self, strength: f32) {
+    pub fn launch_throw(&mut self, force: f32, direction_x: f32, direction_z: f32) {
         self.launched = true;
 
-        let strength = strength.clamp(0.0, 1.0);
-        let speed = 1.5 + self.speed * strength;
+        let force = force.clamp(0.0, 1.0);
+        let direction = Vector2::new(direction_x, direction_z).normalized();
+        let forward = direction.y.max(0.35);
+        let lateral = direction.x.clamp(-0.85, 0.85);
+        let speed = 1.5 + self.speed * force;
         let mut rb = self.rigidbody();
 
-        rb.set_linear_velocity(Vector3::new(speed, 0.0, 0.0));
-        rb.set_angular_velocity(Vector3::new(0.0, 0.0, -speed));
+        rb.set_linear_velocity(Vector3::new(speed * forward, 0.0, speed * lateral * 0.35));
+        rb.set_angular_velocity(Vector3::new(0.0, speed * lateral * 0.6, -speed));
         rb.set_sleeping(false);
     }
 
