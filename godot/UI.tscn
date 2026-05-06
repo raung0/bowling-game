@@ -93,6 +93,21 @@ text = "Player 1"
 layout_mode = 2
 text = "Player 2"
 
+[node name="KickRow" type="HBoxContainer" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=529700342]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="KickPlayerRef" type="LineEdit" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow" unique_id=1932578635]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Player name or id"
+
+[node name="KickButton" type="Button" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow" unique_id=1268112959]
+custom_minimum_size = Vector2(120, 44)
+layout_mode = 2
+text = "Kick"
+
 [node name="Actions" type="HBoxContainer" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer" unique_id=437129141]
 layout_mode = 2
 theme_override_constants/separation = 12
@@ -158,6 +173,20 @@ text = "Current turn: waiting for player"
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Lobby: -"
+
+[node name="HostKickRow" type="HBoxContainer" parent="GameHud/MarginContainer/VBoxContainer" unique_id=1556255119]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="KickPlayerRef" type="LineEdit" parent="GameHud/MarginContainer/VBoxContainer/HostKickRow" unique_id=1249755282]
+custom_minimum_size = Vector2(260, 40)
+layout_mode = 2
+placeholder_text = "Player name or id"
+
+[node name="KickButton" type="Button" parent="GameHud/MarginContainer/VBoxContainer/HostKickRow" unique_id=768607348]
+custom_minimum_size = Vector2(100, 40)
+layout_mode = 2
+text = "Kick"
 
 [node name="ScoreboardPanel" type="Control" parent="GameHud" unique_id=564122119]
 layout_mode = 1

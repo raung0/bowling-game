@@ -29,6 +29,9 @@ pub enum ClientMessage {
         knocked_pins: u8,
         standing_pins: u8,
     },
+    KickPlayer {
+        player_ref: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

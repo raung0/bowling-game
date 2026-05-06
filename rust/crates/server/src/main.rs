@@ -166,7 +166,14 @@ async fn cleanup_timeouts(state: &SharedState) {
     }
 
     for (code, player_id, session) in disconnect_players {
-        remove_player_session(state, &code, &player_id, &session).await;
+        remove_player_session(
+            state,
+            &code,
+            &player_id,
+            &session,
+            "disconnected: reconnect timeout",
+        )
+        .await;
     }
 }
 
@@ -313,6 +320,16 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                             players: players.clone(),
                         },
                     );
+                    if let Some((current_player_id, scoreboard)) = game_snapshot_for_lobby(&state, &code).await {
+                        let _ = send_to_tx(
+                            &tx,
+                            &ServerMessage::GameStarted {
+                                code: code.clone(),
+                                current_player_id,
+                            },
+                        );
+                        let _ = send_to_tx(&tx, &ServerMessage::ScoreboardUpdated { scoreboard });
+                    }
                     broadcast_lobby(
                         &state,
                         &code,
@@ -474,6 +491,23 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     );
                 }
             }
+            ClientMessage::KickPlayer { player_ref } => {
+                if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
+                    match kick_player_by_ref(&state, &code, &player_ref).await {
+                        Ok(()) => {}
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only host can kick players".into(),
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -602,7 +636,14 @@ async fn leave_connection(state: &SharedState, role: &ConnectionRole) {
                 s.player_sessions.get(session).map(|r| r.player_id.clone())
             };
             if let Some(player_id) = player_id {
-                remove_player_session(state, code, &player_id, session).await;
+                remove_player_session(
+                    state,
+                    code,
+                    &player_id,
+                    session,
+                    "left lobby",
+                )
+                .await;
             }
         }
     }
@@ -711,6 +752,74 @@ async fn start_game(state: &SharedState, code: &str) -> Option<(String, Scoreboa
     let current_player_id = lobby.player_order.get(turn_index)?.clone();
     let scoreboard = build_scoreboard(lobby);
     Some((current_player_id, scoreboard))
+}
+
+async fn game_snapshot_for_lobby(
+    state: &SharedState,
+    code: &str,
+) -> Option<(String, ScoreboardState)> {
+    let s = state.lock().await;
+    let lobby = s.lobbies.get(code)?;
+    if !lobby.game_in_progress {
+        return None;
+    }
+    let current_player_id = lobby
+        .current_turn
+        .and_then(|idx| lobby.player_order.get(idx))
+        .cloned()
+        .unwrap_or_default();
+    Some((current_player_id, build_scoreboard(lobby)))
+}
+
+async fn kick_player_by_ref(state: &SharedState, code: &str, player_ref: &str) -> Result<(), String> {
+    let player_ref = player_ref.trim();
+    if player_ref.is_empty() {
+        return Err("enter a player id or username to kick".into());
+    }
+
+    let target = {
+        let s = state.lock().await;
+        let lobby = s
+            .lobbies
+            .get(code)
+            .ok_or_else(|| "lobby not found".to_string())?;
+
+        let by_id = lobby.players.get(player_ref).map(|player| {
+            (
+                player_ref.to_string(),
+                player.session.clone(),
+                player.username.clone(),
+            )
+        });
+        if by_id.is_some() {
+            by_id
+        } else {
+            lobby
+                .players
+                .iter()
+                .find(|(_, player)| player.username.eq_ignore_ascii_case(player_ref))
+                .map(|(player_id, player)| {
+                    (
+                        player_id.clone(),
+                        player.session.clone(),
+                        player.username.clone(),
+                    )
+                })
+        }
+    };
+
+    let Some((player_id, session, username)) = target else {
+        return Err("player not found".into());
+    };
+
+    remove_player_session(state, code, &player_id, &session, "you were kicked by the host").await;
+
+    let msg = ServerMessage::Info {
+        message: format!("Host kicked {username} from the lobby"),
+    };
+    broadcast_lobby(state, code, &msg).await;
+
+    Ok(())
 }
 
 async fn relay_throw_event(
@@ -841,7 +950,13 @@ async fn apply_throw_result(
     Ok(build_scoreboard(lobby))
 }
 
-async fn remove_player_session(state: &SharedState, code: &str, player_id: &str, session: &str) {
+async fn remove_player_session(
+    state: &SharedState,
+    code: &str,
+    player_id: &str,
+    session: &str,
+    reason: &str,
+) {
     let (player_tx, players_after) = {
         let mut s = state.lock().await;
         let (player_tx, players_after) = {
@@ -874,7 +989,7 @@ async fn remove_player_session(state: &SharedState, code: &str, player_id: &str,
         let _ = send_to_tx(
             &tx,
             &ServerMessage::Error {
-                message: "disconnected: reconnect timeout".into(),
+                message: reason.to_string(),
             },
         );
     }

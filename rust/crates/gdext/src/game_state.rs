@@ -126,12 +126,16 @@ impl INode for GameState {
         );
         let mut back_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back");
         let mut start_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Start");
+        let mut host_kick_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow/KickButton");
         let mut hold_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
         let mut controller_back_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/BackToMenu");
+        let mut game_kick_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow/KickButton");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
@@ -139,9 +143,11 @@ impl INode for GameState {
         spectate_button.connect("pressed", &self.base().callable("on_spectate_pressed"));
         back_button.connect("pressed", &self.base().callable("on_back_pressed"));
         start_button.connect("pressed", &self.base().callable("on_start_pressed"));
+        host_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
         hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
         controller_back_button.connect("pressed", &self.base().callable("on_back_pressed"));
+        game_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
 
         self.ensure_username();
         self.load_calibration();
@@ -311,6 +317,11 @@ impl GameState {
             .base_mut()
             .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/LobbyLabel");
         lobby_label.set_text(&GString::from(lobby_line.as_str()));
+
+        let mut host_kick_row = self
+            .base_mut()
+            .get_node_as::<HBoxContainer>("UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow");
+        host_kick_row.set_visible(self.is_host());
 
         self.render_scoreboard();
     }
@@ -1113,6 +1124,36 @@ impl GameState {
         self.send_message(ClientMessage::StartGame);
         self.info_text = "Starting game...".to_string();
         self.screen = Screen::Info;
+    }
+
+    #[func]
+    fn on_kick_pressed(&mut self) {
+        if !self.is_host() {
+            return;
+        }
+
+        let mut host_input = self.base_mut().get_node_as::<LineEdit>(
+            "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow/KickPlayerRef",
+        );
+        let mut game_input = self.base_mut().get_node_as::<LineEdit>(
+            "UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow/KickPlayerRef",
+        );
+
+        let mut player_ref = game_input.get_text().to_string().trim().to_string();
+        if player_ref.is_empty() {
+            player_ref = host_input.get_text().to_string().trim().to_string();
+        }
+        if player_ref.is_empty() {
+            self.info_text = "Enter a player name or id to kick".to_string();
+            self.screen = Screen::Info;
+            return;
+        }
+
+        self.send_message(ClientMessage::KickPlayer {
+            player_ref: player_ref.clone(),
+        });
+        host_input.clear();
+        game_input.clear();
     }
 
     #[func]
