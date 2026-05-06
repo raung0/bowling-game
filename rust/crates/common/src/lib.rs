@@ -32,6 +32,7 @@ pub enum ClientMessage {
     KickPlayer {
         player_ref: String,
     },
+    StopGame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +78,9 @@ pub enum ServerMessage {
     },
     ScoreboardUpdated {
         scoreboard: ScoreboardState,
+    },
+    GameStopped {
+        code: String,
     },
     Info {
         message: String,

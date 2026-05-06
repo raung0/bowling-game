@@ -2,11 +2,32 @@
 
 [ext_resource type="PackedScene" uid="uid://dg7dj2q42dqak" path="res://Assets/bowling_lane.tscn" id="1_wbfu4"]
 [ext_resource type="PackedScene" uid="uid://domarjvmu8sst" path="res://Assets/AllPins.tscn" id="1_xkndl"]
+[ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="3_sb48q"]
 [ext_resource type="PackedScene" uid="uid://c4lxwj7yridtd" path="res://Assets/bowling_ball.tscn" id="4_sb48q"]
+[ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="5_r0x5m"]
+[ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="6_3mrqo"]
+
+[sub_resource type="Resource" id="Resource_joorw"]
+script = ExtResource("6_3mrqo")
 
 [node name="GameManager" type="GameManager" unique_id=2057015636]
 spawn_position = NodePath("PinsSpawnPoint")
 all_pins_scene = ExtResource("1_xkndl")
+
+[node name="PhantomCamera3D" type="Node3D" parent="." unique_id=64845123 node_paths=PackedStringArray("follow_target", "look_at_target")]
+transform = Transform3D(5.9708185e-08, 0.53818893, -0.84282285, -2.9854093e-08, 0.842824, 0.53818816, 1.0017371, -2.9802315e-08, 5.960455e-08, -0.83, 0.7229853, 0)
+top_level = true
+script = ExtResource("5_r0x5m")
+follow_mode = 2
+follow_target = NodePath("../BowlingBall")
+look_at_mode = 2
+look_at_target = NodePath("../BowlingBall")
+tween_resource = SubResource("Resource_joorw")
+follow_offset = Vector3(-0.83, 0.53, 0)
+align_transform_with_view = Callable()
+align_position_with_view = Callable()
+align_rotation_with_view = Callable()
+metadata/_custom_type_script = "uid://csjccrhj5wnx7"
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1705421882]
 transform = Transform3D(0.87855047, -0.06282528, -0.47349977, 0.4776495, 0.11555581, 0.8709178, 0, -0.9913122, 0.13153008, 0, 0, 0)
@@ -17,16 +38,23 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.182, 0.1, 0)
 [node name="BowlingLane" parent="." unique_id=647634671 instance=ExtResource("1_wbfu4")]
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1042158667]
-transform = Transform3D(-3.7855173e-08, 0.5, -0.8660254, 2.1855694e-08, 0.8660254, 0.5, 1, 0, -4.371139e-08, 6.889805, 0.99437046, 0)
+physics_interpolation_mode = 1
+transform = Transform3D(5.9604645e-08, 0.53818905, -0.8428242, -2.9802322e-08, 0.84282416, 0.53818905, 1, -2.9802322e-08, 5.9604645e-08, -0.83, 0.7229853, 0)
+top_level = true
 current = true
 
+[node name="PhantomCameraHost" type="Node" parent="Camera3D" unique_id=794572733]
+process_priority = 300
+process_physics_priority = 300
+script = ExtResource("3_sb48q")
+metadata/_custom_type_script = "uid://bd046eokvcnu2"
+
 [node name="BallStartPoint" type="Node3D" parent="." unique_id=1695478958]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.3262863, 0.13879558, -0.057415247)
 
 [node name="BallEndPoint" type="Node3D" parent="." unique_id=1237491589]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.4, 0.13879558, -0.057415247)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.4, 0, -0.057)
 
 [node name="BowlingBall" parent="." unique_id=1800342674 instance=ExtResource("4_sb48q")]
 track_start = NodePath("../BallStartPoint")
 track_end = NodePath("../BallEndPoint")
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.3262863, 0.13879558, -0.057415247)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.19298536, 0)

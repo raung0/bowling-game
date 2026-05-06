@@ -508,6 +508,30 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     );
                 }
             }
+            ClientMessage::StopGame => {
+                if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
+                    match stop_game(&state, &code).await {
+                        Ok(()) => {
+                            broadcast_lobby(
+                                &state,
+                                &code,
+                                &ServerMessage::GameStopped { code: code.clone() },
+                            )
+                            .await;
+                        }
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only host can stop game".into(),
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -872,6 +896,21 @@ async fn relay_throw_event(
     Ok(player_id)
 }
 
+async fn stop_game(state: &SharedState, code: &str) -> Result<(), String> {
+    let mut s = state.lock().await;
+    let lobby = s
+        .lobbies
+        .get_mut(code)
+        .ok_or_else(|| "lobby not found".to_string())?;
+    if !lobby.game_in_progress {
+        return Err("game has not started".into());
+    }
+    lobby.game_in_progress = false;
+    lobby.ball_in_play = false;
+    lobby.current_turn = None;
+    Ok(())
+}
+
 async fn apply_throw_result(
     state: &SharedState,
     code: &str,
@@ -957,9 +996,9 @@ async fn remove_player_session(
     session: &str,
     reason: &str,
 ) {
-    let (player_tx, players_after) = {
+    let (player_tx, players_after, should_close) = {
         let mut s = state.lock().await;
-        let (player_tx, players_after) = {
+        let (player_tx, players_after, should_close) = {
             let Some(lobby) = s.lobbies.get_mut(code) else {
                 return;
             };
@@ -978,11 +1017,12 @@ async fn remove_player_session(
                     Some(current_turn)
                 };
             }
+            let should_close = lobby.players.is_empty();
             let players_after = lobby_players(lobby);
-            (player.and_then(|p| p.tx), players_after)
+            (player.and_then(|p| p.tx), players_after, should_close)
         };
         s.player_sessions.remove(session);
-        (player_tx, players_after)
+        (player_tx, players_after, should_close)
     };
 
     if let Some(tx) = player_tx {
@@ -992,6 +1032,11 @@ async fn remove_player_session(
                 message: reason.to_string(),
             },
         );
+    }
+
+    if should_close {
+        close_lobby(state, code, "lobby closed: all players left").await;
+        return;
     }
 
     broadcast_lobby(

@@ -1,6 +1,6 @@
 [gd_scene format=4 uid="uid://c4lxwj7yridtd"]
 
-[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_ojniv"]
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_l240j"]
 friction = 0.2
 bounce = 0.05
 absorbent = true
@@ -48,15 +48,13 @@ blend_shape_mode = 0
 shadow_mesh = SubResource("ArrayMesh_uhbn7")
 
 [node name="BowlingBall" type="Ball" unique_id=1660013187]
-
-[node name="RigidBody3D" type="RigidBody3D" parent="." unique_id=1232643512]
 mass = 8.0
-physics_material_override = SubResource("PhysicsMaterial_ojniv")
+physics_material_override = SubResource("PhysicsMaterial_l240j")
 linear_damp = 0.05
 angular_damp = 0.1
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="RigidBody3D" unique_id=1957846525]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1957846525]
 shape = SubResource("SphereShape3D_ojniv")
 
-[node name="Sphere2" type="MeshInstance3D" parent="RigidBody3D" unique_id=990615411]
+[node name="Sphere2" type="MeshInstance3D" parent="." unique_id=990615411]
 mesh = SubResource("ArrayMesh_gslnb")

@@ -124,6 +124,13 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Start"
 
+[node name="Stop" type="Button" parent="CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions" unique_id=1412315616]
+visible = false
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Stop Game"
+
 [node name="Info" type="CenterContainer" parent="." unique_id=1146994472]
 visible = false
 layout_mode = 1
@@ -140,7 +147,6 @@ text = "Loading..."
 horizontal_alignment = 1
 
 [node name="GameHud" type="Control" parent="." unique_id=726381145]
-visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -187,6 +193,12 @@ placeholder_text = "Player name or id"
 custom_minimum_size = Vector2(100, 40)
 layout_mode = 2
 text = "Kick"
+
+[node name="StopGameButton" type="Button" parent="GameHud/MarginContainer/VBoxContainer" unique_id=1502334726]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 0
+text = "Stop Game"
 
 [node name="ScoreboardPanel" type="Control" parent="GameHud" unique_id=564122119]
 layout_mode = 1

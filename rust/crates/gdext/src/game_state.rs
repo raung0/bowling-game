@@ -126,6 +126,7 @@ impl INode for GameState {
         );
         let mut back_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back");
         let mut start_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Start");
+        let mut host_stop_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Stop");
         let mut host_kick_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow/KickButton");
         let mut hold_button = self
             .base()
@@ -136,6 +137,9 @@ impl INode for GameState {
         let mut game_kick_button = self
             .base()
             .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow/KickButton");
+        let mut game_stop_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
@@ -143,11 +147,13 @@ impl INode for GameState {
         spectate_button.connect("pressed", &self.base().callable("on_spectate_pressed"));
         back_button.connect("pressed", &self.base().callable("on_back_pressed"));
         start_button.connect("pressed", &self.base().callable("on_start_pressed"));
+        host_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
         host_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
         hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
         controller_back_button.connect("pressed", &self.base().callable("on_back_pressed"));
         game_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
+        game_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
 
         self.ensure_username();
         self.load_calibration();
@@ -322,6 +328,11 @@ impl GameState {
             .base_mut()
             .get_node_as::<HBoxContainer>("UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow");
         host_kick_row.set_visible(self.is_host());
+
+        let mut stop_game_button = self
+            .base_mut()
+            .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton");
+        stop_game_button.set_visible(self.is_host());
 
         self.render_scoreboard();
     }
@@ -882,6 +893,17 @@ impl GameState {
                 self.info_text = message;
                 self.screen = Screen::Info;
             }
+            ServerMessage::GameStopped { code } => {
+                self.info_text = format!("Game stopped in lobby {code}");
+                self.scoreboard = ScoreboardState::default();
+                self.current_player_id.clear();
+                self.host_throw_start_fallen = 0;
+                self.screen = if self.is_host() {
+                    Screen::Host
+                } else {
+                    Screen::Info
+                };
+            }
             ServerMessage::Error { message } => {
                 self.info_text = format!("Error: {message}");
                 self.controller_holding = false;
@@ -1123,6 +1145,16 @@ impl GameState {
     fn on_start_pressed(&mut self) {
         self.send_message(ClientMessage::StartGame);
         self.info_text = "Starting game...".to_string();
+        self.screen = Screen::Info;
+    }
+
+    #[func]
+    fn on_stop_game_pressed(&mut self) {
+        if !self.is_host() {
+            return;
+        }
+        self.send_message(ClientMessage::StopGame);
+        self.info_text = "Stopping game...".to_string();
         self.screen = Screen::Info;
     }
 

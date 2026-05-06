@@ -1,9 +1,12 @@
-use godot::{classes::RigidBody3D, prelude::*};
+use godot::{
+    classes::{IRigidBody3D, RigidBody3D},
+    prelude::*,
+};
 
 #[derive(GodotClass)]
-#[class(base=Node3D)]
+#[class(base=RigidBody3D)]
 pub struct Ball {
-    base: Base<Node3D>,
+    base: Base<RigidBody3D>,
 
     #[export]
     track_start: NodePath,
@@ -21,8 +24,8 @@ pub struct Ball {
 }
 
 #[godot_api]
-impl INode3D for Ball {
-    fn init(base: Base<Node3D>) -> Self {
+impl IRigidBody3D for Ball {
+    fn init(base: Base<RigidBody3D>) -> Self {
         Self {
             base,
             track_start: NodePath::default(),
@@ -46,8 +49,7 @@ impl INode3D for Ball {
             return;
         };
 
-        let rb = self.rigidbody();
-        let ball_x = rb.get_global_position().x;
+        let ball_x = self.base().get_global_position().x;
         let end_x = end.get_global_position().x;
 
         if self.reset_when_past_end && ball_x > end_x {
@@ -59,14 +61,11 @@ impl INode3D for Ball {
 
 #[godot_api]
 impl Ball {
-    fn rigidbody(&self) -> Gd<RigidBody3D> {
-        self.base().get_node_as::<RigidBody3D>("RigidBody3D")
-    }
-
     fn track_start_node(&self) -> Option<Gd<Node3D>> {
         if self.track_start.is_empty() {
             return None;
         }
+
         Some(self.base().get_node_as::<Node3D>(&self.track_start))
     }
 
@@ -74,6 +73,7 @@ impl Ball {
         if self.track_end.is_empty() {
             return None;
         }
+
         Some(self.base().get_node_as::<Node3D>(&self.track_end))
     }
 
@@ -83,13 +83,17 @@ impl Ball {
 
         let force = force.clamp(0.0, 1.0);
         let direction = Vector2::new(direction_x, direction_z).normalized();
+
         let forward = direction.y.max(0.35);
         let lateral = direction.x.clamp(-0.85, 0.85);
         let speed = 1.5 + self.speed * force;
-        let mut rb = self.rigidbody();
+
+        let mut rb = self.base_mut();
 
         rb.set_linear_velocity(Vector3::new(speed * forward, 0.0, speed * lateral * 0.35));
+
         rb.set_angular_velocity(Vector3::new(0.0, speed * lateral * 0.6, -speed));
+
         rb.set_sleeping(false);
     }
 
@@ -102,7 +106,7 @@ impl Ball {
         };
 
         let pos = start.get_global_position();
-        let mut rb = self.rigidbody();
+        let mut rb = self.base_mut();
 
         rb.set_global_position(pos);
         rb.set_linear_velocity(Vector3::ZERO);
@@ -120,11 +124,9 @@ impl Ball {
             return 0.0;
         };
 
-        let rb = self.rigidbody();
-
         let start_x = start.get_global_position().x;
         let end_x = end.get_global_position().x;
-        let ball_x = rb.get_global_position().x;
+        let ball_x = self.base().get_global_position().x;
 
         ((ball_x - start_x) / (end_x - start_x)).clamp(0.0, 1.0)
     }
