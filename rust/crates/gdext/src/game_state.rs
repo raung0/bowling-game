@@ -28,7 +28,8 @@ const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
 const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
 const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.08;
 const CALIBRATION_THROW_COUNT: usize = 3;
-const THROW_SETTLE_SECS: f64 = 5.0;
+const THROW_SETTLE_SECS: f64 = 2.0;
+const LEAVE_HOLD_SECS: f64 = 5.0;
 
 #[derive(Clone, Copy, Default)]
 pub enum Screen {
@@ -77,6 +78,8 @@ pub struct GameState {
     host_throw_start_fallen: i32,
     host_throw_waiting_report: bool,
     host_throw_settle_secs: f64,
+    leave_holding: bool,
+    leave_hold_secs: f64,
 
     base: Base<Node>,
 }
@@ -111,6 +114,8 @@ impl INode for GameState {
             host_throw_start_fallen: 0,
             host_throw_waiting_report: false,
             host_throw_settle_secs: 0.0,
+            leave_holding: false,
+            leave_hold_secs: 0.0,
         }
     }
 
@@ -150,13 +155,16 @@ impl INode for GameState {
         calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
         create_button.connect("pressed", &self.base().callable("on_create_pressed"));
         spectate_button.connect("pressed", &self.base().callable("on_spectate_pressed"));
-        back_button.connect("pressed", &self.base().callable("on_back_pressed"));
+        back_button.connect("button_down", &self.base().callable("on_leave_button_down"));
+        back_button.connect("button_up", &self.base().callable("on_leave_button_up"));
         start_button.connect("pressed", &self.base().callable("on_start_pressed"));
         host_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
         host_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
         hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
-        controller_back_button.connect("pressed", &self.base().callable("on_back_pressed"));
+        controller_back_button
+            .connect("button_down", &self.base().callable("on_leave_button_down"));
+        controller_back_button.connect("button_up", &self.base().callable("on_leave_button_up"));
         game_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         game_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
 
@@ -173,6 +181,7 @@ impl INode for GameState {
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
         self.update_controller_strength();
+        self.update_leave_hold(delta);
         self.maybe_finish_host_throw(delta);
 
         let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
@@ -590,12 +599,13 @@ impl GameState {
             self.host_throw_settle_secs = 0.0;
 
             let fallen_count = self.current_fallen_count();
-            let standing_count = self.current_standing_count();
             let knocked = (fallen_count - self.host_throw_start_fallen).max(0) as u8;
+
+            let standing = self.scoreboard.pins_remaining.saturating_sub(knocked);
 
             self.send_message(ClientMessage::ReportThrowResult {
                 knocked_pins: knocked,
-                standing_pins: standing_count.max(0) as u8,
+                standing_pins: standing,
             });
 
             self.host_throw_start_fallen = fallen_count;
@@ -606,12 +616,6 @@ impl GameState {
         self.try_game_manager()
             .map(|game_manager| game_manager.bind().fallen_count())
             .unwrap_or(0)
-    }
-
-    fn current_standing_count(&self) -> i32 {
-        self.try_game_manager()
-            .map(|game_manager| game_manager.bind().standing_count())
-            .unwrap_or(10)
     }
 
     fn sync_host_lane_to_scoreboard(&mut self, previous: &ScoreboardState) {
@@ -637,7 +641,7 @@ impl GameState {
                 ball.bind_mut().reset_ball();
             }
 
-            self.host_throw_start_fallen = self.current_fallen_count();
+            self.host_throw_start_fallen = 0;
         } else {
             self.reset_lane_for_turn();
             self.host_throw_start_fallen = 0;
@@ -940,19 +944,33 @@ impl GameState {
                 };
             }
             ServerMessage::Error { message } => {
+                godot_error!("SERVER ERROR: {}", message);
                 self.info_text = format!("Error: {message}");
+
                 self.controller_holding = false;
                 self.controller_force = 0.0;
                 self.controller_direction = Vector2::new(0.0, 1.0);
                 self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
-                self.clear_session_keys();
-                self.session_role = None;
-                self.player_id.clear();
-                self.current_player_id.clear();
-                self.scoreboard = ScoreboardState::default();
-                self.host_throw_start_fallen = 0;
-                self.screen = Screen::MainMenu;
+
+                self.host_ball_was_launched = false;
+                self.host_throw_waiting_report = false;
+                self.host_throw_settle_secs = 0.0;
+
+                if message.contains("kicked")
+                    || message.contains("lobby closed")
+                    || message.contains("reconnect failed")
+                    || message.contains("lobby not found")
+                {
+                    self.clear_session_keys();
+                    self.session_role = None;
+                    self.player_id.clear();
+                    self.current_player_id.clear();
+                    self.scoreboard = ScoreboardState::default();
+                    self.screen = Screen::MainMenu;
+                } else {
+                    self.screen = self.gameplay_screen();
+                }
             }
         }
     }
@@ -1117,6 +1135,43 @@ impl GameState {
         };
         bridge.call("clear_local_value", &[key.to_variant()]);
     }
+
+    fn update_leave_hold(&mut self, delta: f64) {
+        if !self.leave_holding {
+            return;
+        }
+
+        self.leave_hold_secs += delta;
+
+        if self.leave_hold_secs >= LEAVE_HOLD_SECS {
+            self.leave_holding = false;
+            self.leave_hold_secs = 0.0;
+            self.leave_game();
+        }
+    }
+
+    fn leave_game(&mut self) {
+        self.send_message(ClientMessage::Leave);
+        self.clear_session_keys();
+        self.session_role = None;
+        self.player_id.clear();
+        self.lobby_code.clear();
+        self.players.clear();
+        self.current_player_id.clear();
+        self.scoreboard = ScoreboardState::default();
+        self.controller_holding = false;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = Vector3::ZERO;
+        self.controller_motion_history.clear();
+        self.calibration_active = false;
+        self.calibration_samples.clear();
+        self.host_throw_start_fallen = 0;
+        self.host_throw_waiting_report = false;
+        self.host_throw_settle_secs = 0.0;
+        self.sync_username_input();
+        self.screen = Screen::MainMenu;
+    }
 }
 
 #[godot_api]
@@ -1155,25 +1210,16 @@ impl GameState {
     }
 
     #[func]
-    fn on_back_pressed(&mut self) {
-        self.send_message(ClientMessage::Leave);
-        self.clear_session_keys();
-        self.session_role = None;
-        self.player_id.clear();
-        self.lobby_code.clear();
-        self.players.clear();
-        self.current_player_id.clear();
-        self.scoreboard = ScoreboardState::default();
-        self.controller_holding = false;
-        self.controller_force = 0.0;
-        self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_baseline_accel = Vector3::ZERO;
-        self.controller_motion_history.clear();
-        self.calibration_active = false;
-        self.calibration_samples.clear();
-        self.host_throw_start_fallen = 0;
-        self.sync_username_input();
-        self.screen = Screen::MainMenu;
+    fn on_leave_button_down(&mut self) {
+        self.leave_holding = true;
+        self.leave_hold_secs = 0.0;
+        self.info_text = "Hold for 5 seconds to leave...".to_string();
+    }
+
+    #[func]
+    fn on_leave_button_up(&mut self) {
+        self.leave_holding = false;
+        self.leave_hold_secs = 0.0;
     }
 
     #[func]

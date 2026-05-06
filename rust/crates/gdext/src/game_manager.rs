@@ -141,6 +141,10 @@ impl GameManager {
 
             if pin_index >= 0 && self.is_pin_fallen(pin_index) {
                 child.queue_free();
+
+                if let Some(fallen) = self.pins_fallen.get_mut(pin_index as usize) {
+                    *fallen = false;
+                }
             }
         }
     }
