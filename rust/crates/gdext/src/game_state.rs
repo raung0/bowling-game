@@ -19,8 +19,11 @@ const STORAGE_CODE: &str = "lobby_code";
 const STORAGE_USERNAME: &str = "username";
 const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
 const MOTION_HISTORY_LIMIT: usize = 12;
+const MOTION_BASELINE_SAMPLES: usize = 4;
+const MOTION_PEAK_WINDOW_SAMPLES: usize = 3;
 const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
 const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
+const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.2;
 
 #[derive(Clone, Copy, Default)]
 pub enum Screen {
@@ -59,6 +62,7 @@ pub struct GameState {
     controller_holding: bool,
     controller_force: f32,
     controller_direction: Vector2,
+    controller_baseline_accel: Vector3,
     controller_motion_history: VecDeque<Vector3>,
     host_ball_was_launched: bool,
 
@@ -85,6 +89,7 @@ impl INode for GameState {
             controller_holding: false,
             controller_force: 0.0,
             controller_direction: Vector2::new(0.0, 1.0),
+            controller_baseline_accel: Vector3::ZERO,
             controller_motion_history: VecDeque::with_capacity(MOTION_HISTORY_LIMIT),
             host_ball_was_launched: false,
         }
@@ -279,8 +284,20 @@ impl GameState {
             return (0.0, Vector2::new(0.0, 1.0));
         }
 
-        let mut best_forward = 0.0_f32;
-        let mut best_sideways = 0.0_f32;
+        let baseline_sample_count = self
+            .controller_motion_history
+            .len()
+            .clamp(1, MOTION_BASELINE_SAMPLES);
+        let baseline_divisor = baseline_sample_count as f32 + 1.0;
+        let baseline = self
+            .controller_motion_history
+            .iter()
+            .take(baseline_sample_count)
+            .copied()
+            .fold(self.controller_baseline_accel, |acc, sample| acc + sample)
+            / baseline_divisor;
+
+        let mut relative_samples = Vec::with_capacity(self.controller_motion_history.len());
         let mut last = None;
         for sample in &self.controller_motion_history {
             let smoothed = if let Some(prev) = last {
@@ -289,17 +306,39 @@ impl GameState {
                 *sample
             };
             last = Some(*sample);
+            relative_samples.push(smoothed - baseline);
+        }
 
-            let sideways = -smoothed.x;
-            let forward = (-smoothed.y).max(0.0);
+        let mut best_forward = 0.0_f32;
+        let mut best_index = 0usize;
+        for (idx, relative) in relative_samples.iter().enumerate() {
+            let forward = (-relative.y).max(0.0);
             if forward > best_forward {
                 best_forward = forward;
-                best_sideways = sideways;
+                best_index = idx;
             }
         }
 
         if best_forward <= 0.0 {
             return (0.0, Vector2::new(0.0, 1.0));
+        }
+
+        let window_radius = MOTION_PEAK_WINDOW_SAMPLES / 2;
+        let window_start = best_index.saturating_sub(window_radius);
+        let window_end = (best_index + window_radius + 1).min(relative_samples.len());
+        let mut sideways_total = 0.0_f32;
+        let mut sideways_count = 0usize;
+        for relative in &relative_samples[window_start..window_end] {
+            sideways_total += relative.z;
+            sideways_count += 1;
+        }
+        let mut best_sideways = if sideways_count > 0 {
+            sideways_total / sideways_count as f32
+        } else {
+            0.0
+        };
+        if best_sideways.abs() < BOWLING_SIDEWAYS_DEADZONE {
+            best_sideways = 0.0;
         }
 
         let max_sideways = best_forward * BOWLING_SWING_MAX_ANGLE_DEG.to_radians().tan();
@@ -578,6 +617,7 @@ impl GameState {
                 self.controller_holding = false;
                 self.controller_force = 0.0;
                 self.controller_direction = Vector2::new(0.0, 1.0);
+                self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
                 if self.is_host() {
                     self.reset_lane_for_turn();
@@ -593,6 +633,7 @@ impl GameState {
                 self.controller_holding = false;
                 self.controller_force = 0.0;
                 self.controller_direction = Vector2::new(0.0, 1.0);
+                self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
                 if self.is_host()
                     && let Some(mut ball) = self.try_ball()
@@ -611,6 +652,7 @@ impl GameState {
                 self.controller_holding = false;
                 self.controller_force = 0.0;
                 self.controller_direction = Vector2::new(0.0, 1.0);
+                self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
                 self.clear_session_keys();
                 self.session_role = None;
@@ -805,6 +847,7 @@ impl GameState {
         self.controller_holding = false;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
         self.screen = Screen::MainMenu;
     }
@@ -825,6 +868,7 @@ impl GameState {
         self.controller_holding = true;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = self.accel;
         self.controller_motion_history.clear();
         self.controller_motion_history.push_back(self.accel);
     }
@@ -840,6 +884,7 @@ impl GameState {
         let direction = self.controller_direction;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
         if self.is_local_player_turn() {
             self.send_message(ClientMessage::ThrowEvent {
