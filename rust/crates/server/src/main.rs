@@ -320,7 +320,9 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                             players: players.clone(),
                         },
                     );
-                    if let Some((current_player_id, scoreboard)) = game_snapshot_for_lobby(&state, &code).await {
+                    if let Some((current_player_id, scoreboard)) =
+                        game_snapshot_for_lobby(&state, &code).await
+                    {
                         let _ = send_to_tx(
                             &tx,
                             &ServerMessage::GameStarted {
@@ -660,14 +662,7 @@ async fn leave_connection(state: &SharedState, role: &ConnectionRole) {
                 s.player_sessions.get(session).map(|r| r.player_id.clone())
             };
             if let Some(player_id) = player_id {
-                remove_player_session(
-                    state,
-                    code,
-                    &player_id,
-                    session,
-                    "left lobby",
-                )
-                .await;
+                remove_player_session(state, code, &player_id, session, "left lobby").await;
             }
         }
     }
@@ -795,7 +790,11 @@ async fn game_snapshot_for_lobby(
     Some((current_player_id, build_scoreboard(lobby)))
 }
 
-async fn kick_player_by_ref(state: &SharedState, code: &str, player_ref: &str) -> Result<(), String> {
+async fn kick_player_by_ref(
+    state: &SharedState,
+    code: &str,
+    player_ref: &str,
+) -> Result<(), String> {
     let player_ref = player_ref.trim();
     if player_ref.is_empty() {
         return Err("enter a player id or username to kick".into());
@@ -836,7 +835,14 @@ async fn kick_player_by_ref(state: &SharedState, code: &str, player_ref: &str) -
         return Err("player not found".into());
     };
 
-    remove_player_session(state, code, &player_id, &session, "you were kicked by the host").await;
+    remove_player_session(
+        state,
+        code,
+        &player_id,
+        &session,
+        "you were kicked by the host",
+    )
+    .await;
 
     let msg = ServerMessage::Info {
         message: format!("Host kicked {username} from the lobby"),
