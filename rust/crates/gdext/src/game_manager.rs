@@ -87,7 +87,7 @@ impl GameManager {
         }
 
         self.pins_fallen.clear();
-        godot_print!("pins clearned, pins_fallen={:?}", self.pins_fallen);
+        godot_print!("pins cleared, pins_fallen={:?}", self.pins_fallen);
     }
 
     #[func]

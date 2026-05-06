@@ -1,11 +1,9 @@
-use common::{ClientMessage, PlayerInfo, PlayerScoreView, ScoreboardState, ServerMessage};
+use common::{ClientMessage, PlayerInfo, ScoreboardState, ServerMessage};
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{
-        Button, HBoxContainer, Label, LineEdit, Node, ProgressBar, VBoxContainer, WebSocketPeer,
-    },
-    global::{Error, HorizontalAlignment},
+    classes::{Button, LineEdit, Node, WebSocketPeer},
+    global::Error,
     prelude::*,
 };
 use rand::Rng;
@@ -14,20 +12,9 @@ use std::{collections::VecDeque, str::FromStr};
 use crate::ball::Ball;
 use crate::game_manager::GameManager;
 use crate::ui_manager::UiManager;
+use crate::{controller, rendering, storage};
 
-const STORAGE_ROLE: &str = "session_role";
-const STORAGE_TOKEN: &str = "session_token";
-const STORAGE_CODE: &str = "lobby_code";
-const STORAGE_USERNAME: &str = "username";
-const STORAGE_CALIBRATION_X: &str = "calibration_x";
 const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
-const MOTION_HISTORY_LIMIT: usize = 12;
-const MOTION_BASELINE_SAMPLES: usize = 4;
-const MOTION_PEAK_WINDOW_SAMPLES: usize = 3;
-const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
-const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
-const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.08;
-const CALIBRATION_THROW_COUNT: usize = 3;
 const THROW_SETTLE_SECS: f64 = 3.0;
 const LEAVE_HOLD_SECS: f64 = 5.0;
 
@@ -106,7 +93,7 @@ impl INode for GameState {
             controller_force: 0.0,
             controller_direction: Vector2::new(0.0, 1.0),
             controller_baseline_accel: Vector3::ZERO,
-            controller_motion_history: VecDeque::with_capacity(MOTION_HISTORY_LIMIT),
+            controller_motion_history: VecDeque::with_capacity(controller::MOTION_HISTORY_LIMIT),
             calibration_active: false,
             calibration_samples: Vec::new(),
             calibration_offset_x: 0.0,
@@ -134,10 +121,18 @@ impl INode for GameState {
         let mut spectate_button = self.base().get_node_as::<Button>(
             "UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Spectate",
         );
-        let mut back_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back");
-        let mut start_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Start");
-        let mut host_stop_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Stop");
-        let mut host_kick_button = self.base().get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow/KickButton");
+        let mut back_button = self.base().get_node_as::<Button>(
+            "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back",
+        );
+        let mut start_button = self.base().get_node_as::<Button>(
+            "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Start",
+        );
+        let mut host_stop_button = self.base().get_node_as::<Button>(
+            "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Stop",
+        );
+        let mut host_kick_button = self.base().get_node_as::<Button>(
+            "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/KickRow/KickButton",
+        );
         let mut hold_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
@@ -184,16 +179,50 @@ impl INode for GameState {
         self.update_leave_hold(delta);
         self.maybe_finish_host_throw(delta);
 
-        let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
-        ui_manager
-            .bind_mut()
-            .set_screen(self.screen, self.is_mobile);
+        let is_mobile = self.is_mobile;
+        {
+            let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
+            ui_manager.bind_mut().set_screen(self.screen, is_mobile);
+        }
 
-        self.render_mobile_accel();
-        self.render_calibration_status();
-        self.render_controller_ui();
-        self.render_game_ui();
-        self.render_info_text();
+        let accel = self.accel;
+        let calibration_active = self.calibration_active;
+        let calibration_samples_len = self.calibration_samples.len();
+        let calibration_offset_x = self.calibration_offset_x;
+
+        let controller_status = self.controller_status_text();
+        let controller_force = self.controller_force;
+        let controller_direction = self.controller_direction;
+        let controller_enabled = self.calibration_active || self.is_local_player_turn();
+
+        let current_player_label = if self.current_player_id.is_empty() {
+            "Current turn: waiting for player".to_string()
+        } else {
+            format!("Current turn: {}", self.current_player_name())
+        };
+        let lobby_code = self.lobby_code.clone();
+        let is_host = self.is_host();
+        let scoreboard = self.scoreboard.clone();
+        let info_text = self.info_text.clone();
+
+        rendering::render_mobile_accel(self, accel);
+        rendering::render_calibration_status(
+            self,
+            calibration_active,
+            calibration_samples_len,
+            calibration_offset_x,
+            controller::CALIBRATION_THROW_COUNT,
+        );
+        rendering::render_controller_ui(
+            self,
+            &controller_status,
+            controller_force,
+            controller_direction,
+            controller_enabled,
+        );
+        rendering::render_game_ui(self, &current_player_label, &lobby_code, is_host);
+        rendering::render_scoreboard(self, &scoreboard);
+        rendering::render_info_text(self, &info_text);
     }
 }
 
@@ -222,6 +251,26 @@ impl GameState {
             .unwrap_or_else(|| "Waiting for player".to_string())
     }
 
+    fn controller_status_text(&self) -> String {
+        if self.calibration_active {
+            format!(
+                "Calibration throw {}/{}: hold, throw straight, release",
+                self.calibration_samples.len() + 1,
+                controller::CALIBRATION_THROW_COUNT
+            )
+        } else if self.current_player_id.is_empty() {
+            "Waiting for host...".to_string()
+        } else if self.is_local_player_turn() {
+            if self.controller_holding {
+                "Throw now, then let go to release".to_string()
+            } else {
+                "Your turn - hold to throw".to_string()
+            }
+        } else {
+            format!("Waiting for {}", self.current_player_name())
+        }
+    }
+
     fn try_ball(&self) -> Option<Gd<Ball>> {
         self.base()
             .get_node_or_null("GameManager/BowlingBall")
@@ -247,323 +296,21 @@ impl GameState {
         self.host_throw_settle_secs = 0.0;
     }
 
-    fn render_mobile_accel(&mut self) {
-        let mut accel_label = self
-            .base_mut()
-            .get_node_as::<Label>("UiManager/Mobile/VBoxContainer/Accel");
-        accel_label.set_text(&format!(
-            "Accel: x={:.2} y={:.2} z={:.2}",
-            self.accel.x, self.accel.y, self.accel.z
-        ));
-    }
-
-    fn render_calibration_status(&mut self) {
-        let mut calibration_label = self
-            .base_mut()
-            .get_node_as::<Label>("UiManager/Mobile/VBoxContainer/CalibrationStatus");
-        let text = if self.calibration_active {
-            format!(
-                "Calibration in progress: {}/{}",
-                self.calibration_samples.len(),
-                CALIBRATION_THROW_COUNT
-            )
-        } else {
-            format!("Calibration offset: {:+.3}", self.calibration_offset_x)
-        };
-        calibration_label.set_text(&GString::from(text.as_str()));
-    }
-
-    fn render_controller_ui(&mut self) {
-        let status = if self.calibration_active {
-            format!(
-                "Calibration throw {}/{}: hold, throw straight, release",
-                self.calibration_samples.len() + 1,
-                CALIBRATION_THROW_COUNT
-            )
-        } else if self.current_player_id.is_empty() {
-            "Waiting for host...".to_string()
-        } else if self.is_local_player_turn() {
-            if self.controller_holding {
-                "Throw now, then let go to release".to_string()
-            } else {
-                "Your turn - hold to throw".to_string()
-            }
-        } else {
-            format!("Waiting for {}", self.current_player_name())
-        };
-
-        let mut status_label = self
-            .base_mut()
-            .get_node_as::<Label>("UiManager/Controller/MarginContainer/VBoxContainer/Status");
-        status_label.set_text(&GString::from(status.as_str()));
-
-        let mut strength_label = self.base_mut().get_node_as::<Label>(
-            "UiManager/Controller/MarginContainer/VBoxContainer/StrengthLabel",
-        );
-        strength_label.set_text(&format!(
-            "Force: {:.0}%  Dir: ({:.2}, {:.2})",
-            self.controller_force * 100.0,
-            self.controller_direction.x,
-            self.controller_direction.y,
-        ));
-
-        let mut strength_bar = self.base_mut().get_node_as::<ProgressBar>(
-            "UiManager/Controller/MarginContainer/VBoxContainer/StrengthBar",
-        );
-        strength_bar.set_value((self.controller_force * 100.0) as f64);
-
-        let mut hold_button = self
-            .base_mut()
-            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
-        hold_button.set_disabled(!(self.calibration_active || self.is_local_player_turn()));
-    }
-
-    fn render_game_ui(&mut self) {
-        let current_player = if self.current_player_id.is_empty() {
-            "Current turn: waiting for player".to_string()
-        } else {
-            format!("Current turn: {}", self.current_player_name())
-        };
-
-        let mut turn_label = self
-            .base_mut()
-            .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/TurnLabel");
-        turn_label.set_text(&GString::from(current_player.as_str()));
-
-        let lobby_line = if self.lobby_code.is_empty() {
-            "Lobby: -".to_string()
-        } else {
-            format!("Lobby: {}", self.lobby_code)
-        };
-        let mut lobby_label = self
-            .base_mut()
-            .get_node_as::<Label>("UiManager/GameHud/MarginContainer/VBoxContainer/LobbyLabel");
-        lobby_label.set_text(&GString::from(lobby_line.as_str()));
-
-        let mut host_kick_row = self.base_mut().get_node_as::<HBoxContainer>(
-            "UiManager/GameHud/MarginContainer/VBoxContainer/HostKickRow",
-        );
-        host_kick_row.set_visible(self.is_host());
-
-        let mut stop_game_button = self.base_mut().get_node_as::<Button>(
-            "UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton",
-        );
-        stop_game_button.set_visible(self.is_host());
-
-        self.render_scoreboard();
-    }
-
-    fn render_scoreboard(&mut self) {
-        let players = self.scoreboard.players.clone();
-        let current = players.first().cloned();
-        let next_players = players.iter().skip(1).take(3).cloned().collect::<Vec<_>>();
-        let remaining = players.iter().skip(4).cloned().collect::<Vec<_>>();
-
-        let mut current_root = self.base_mut().get_node_as::<VBoxContainer>(
-            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/CurrentTable",
-        );
-        Self::clear_container(&mut current_root);
-        if let Some(current) = current.as_ref() {
-            self.add_scorecard(&mut current_root, current, true);
-        }
-
-        let mut next_root = self.base_mut().get_node_as::<VBoxContainer>(
-            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/NextTables",
-        );
-        Self::clear_container(&mut next_root);
-        for player in &next_players {
-            self.add_scorecard(&mut next_root, player, false);
-        }
-
-        let mut remaining_header = self.base_mut().get_node_as::<Label>(
-            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/RemainingHeader",
-        );
-        remaining_header.set_visible(!remaining.is_empty());
-
-        let mut remaining_root = self.base_mut().get_node_as::<VBoxContainer>(
-            "UiManager/GameHud/ScoreboardPanel/MarginContainer/VBoxContainer/RemainingPlayers",
-        );
-        Self::clear_container(&mut remaining_root);
-        for player in &remaining {
-            let mut row = HBoxContainer::new_alloc();
-
-            let mut name = Label::new_alloc();
-            name.set_text(&GString::from(player.username.as_str()));
-            row.add_child(&name);
-
-            let mut status = Label::new_alloc();
-            status.set_text(&GString::from(player.status_label.as_str()));
-            row.add_child(&status);
-
-            let mut total = Label::new_alloc();
-            total.set_text(&GString::from(format!("{}", player.total_score).as_str()));
-            row.add_child(&total);
-
-            remaining_root.add_child(&row);
-        }
-    }
-
-    fn add_scorecard(
-        &self,
-        root: &mut Gd<VBoxContainer>,
-        player: &PlayerScoreView,
-        featured: bool,
-    ) {
-        let mut wrapper = VBoxContainer::new_alloc();
-        wrapper.add_theme_constant_override("separation", if featured { 8 } else { 6 });
-
-        let mut header = HBoxContainer::new_alloc();
-        let mut name = Label::new_alloc();
-        name.set_text(&GString::from(player.username.as_str()));
-        name.add_theme_font_size_override("font_size", if featured { 28 } else { 22 });
-        header.add_child(&name);
-
-        let mut status = Label::new_alloc();
-        status.set_text(&GString::from(player.status_label.as_str()));
-        status.add_theme_font_size_override("font_size", if featured { 20 } else { 16 });
-        header.add_child(&status);
-
-        let mut total = Label::new_alloc();
-        total.set_text(&GString::from(format!("{}", player.total_score).as_str()));
-        total.add_theme_font_size_override("font_size", if featured { 24 } else { 18 });
-        header.add_child(&total);
-        wrapper.add_child(&header);
-
-        let mut frames = HBoxContainer::new_alloc();
-        frames.add_theme_constant_override("separation", if featured { 6 } else { 4 });
-        for (idx, frame) in player.frames.iter().enumerate() {
-            let mut frame_box = VBoxContainer::new_alloc();
-            frame_box
-                .set_custom_minimum_size(Vector2::new(if featured { 48.0 } else { 38.0 }, 0.0));
-            frame_box.add_theme_constant_override("separation", 2);
-
-            let mut frame_label = Label::new_alloc();
-            frame_label.set_text(&GString::from(format!("{}", idx + 1).as_str()));
-            frame_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
-            frame_label.add_theme_font_size_override("font_size", if featured { 14 } else { 12 });
-            frame_box.add_child(&frame_label);
-
-            let mut rolls_label = Label::new_alloc();
-            let rolls_text = if frame.rolls.is_empty() {
-                String::from(" ")
-            } else {
-                frame.rolls.join(" ")
-            };
-            rolls_label.set_text(&GString::from(rolls_text.as_str()));
-            rolls_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
-            rolls_label.add_theme_font_size_override("font_size", if featured { 16 } else { 13 });
-            frame_box.add_child(&rolls_label);
-
-            let mut score_label = Label::new_alloc();
-            let score_text = frame
-                .cumulative_score
-                .map(|score| score.to_string())
-                .unwrap_or_default();
-            score_label.set_text(&GString::from(score_text.as_str()));
-            score_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
-            score_label.add_theme_font_size_override("font_size", if featured { 16 } else { 13 });
-            frame_box.add_child(&score_label);
-
-            frames.add_child(&frame_box);
-        }
-        wrapper.add_child(&frames);
-        root.add_child(&wrapper);
-    }
-
-    fn clear_container<T>(container: &mut Gd<T>)
-    where
-        T: Inherits<Node>,
-    {
-        let mut node = container.clone().upcast::<Node>();
-        let children = node.get_children();
-        for mut child in children.iter_shared() {
-            node.remove_child(&child);
-            child.queue_free();
-        }
-    }
-
     fn update_controller_strength(&mut self) {
         if !self.controller_holding {
             return;
         }
 
-        if self.controller_motion_history.len() == MOTION_HISTORY_LIMIT {
+        if self.controller_motion_history.len() == controller::MOTION_HISTORY_LIMIT {
             self.controller_motion_history.pop_front();
         }
         self.controller_motion_history.push_back(self.accel);
-        let (force, direction) = self.estimate_throw_from_history();
+        let (force, direction) = controller::estimate_throw_from_history(
+            &self.controller_motion_history,
+            self.controller_baseline_accel,
+        );
         self.controller_force = force;
         self.controller_direction = direction;
-    }
-
-    fn estimate_throw_from_history(&self) -> (f32, Vector2) {
-        if self.controller_motion_history.is_empty() {
-            return (0.0, Vector2::new(0.0, 1.0));
-        }
-
-        let baseline_sample_count = self
-            .controller_motion_history
-            .len()
-            .clamp(1, MOTION_BASELINE_SAMPLES);
-        let baseline_divisor = baseline_sample_count as f32 + 1.0;
-        let baseline = self
-            .controller_motion_history
-            .iter()
-            .take(baseline_sample_count)
-            .copied()
-            .fold(self.controller_baseline_accel, |acc, sample| acc + sample)
-            / baseline_divisor;
-
-        let mut relative_samples = Vec::with_capacity(self.controller_motion_history.len());
-        let mut last = None;
-        for sample in &self.controller_motion_history {
-            let smoothed = if let Some(prev) = last {
-                (*sample + prev) * 0.5
-            } else {
-                *sample
-            };
-            last = Some(*sample);
-            relative_samples.push(smoothed - baseline);
-        }
-
-        let mut best_forward = 0.0_f32;
-        let mut best_index = 0usize;
-        for (idx, relative) in relative_samples.iter().enumerate() {
-            let forward = (-relative.y).max(0.0);
-            if forward > best_forward {
-                best_forward = forward;
-                best_index = idx;
-            }
-        }
-
-        if best_forward <= 0.0 {
-            return (0.0, Vector2::new(0.0, 1.0));
-        }
-
-        let window_radius = MOTION_PEAK_WINDOW_SAMPLES / 2;
-        let window_start = best_index.saturating_sub(window_radius);
-        let window_end = (best_index + window_radius + 1).min(relative_samples.len());
-        let mut sideways_total = 0.0_f32;
-        let mut sideways_count = 0usize;
-        for relative in &relative_samples[window_start..window_end] {
-            sideways_total += relative.z;
-            sideways_count += 1;
-        }
-        let mut best_sideways = if sideways_count > 0 {
-            sideways_total / sideways_count as f32
-        } else {
-            0.0
-        };
-        if best_sideways.abs() < BOWLING_SIDEWAYS_DEADZONE {
-            best_sideways = 0.0;
-        }
-
-        let max_sideways = best_forward * BOWLING_SWING_MAX_ANGLE_DEG.to_radians().tan();
-        let clamped_sideways = best_sideways.clamp(-max_sideways, max_sideways);
-        let direction = Vector2::new(clamped_sideways, best_forward).normalized();
-        let force = ((best_forward - BOWLING_SWING_MIN_FORCE) / 8.0).clamp(0.0, 1.0);
-
-        (force, direction)
     }
 
     fn maybe_finish_host_throw(&mut self, delta: f64) {
@@ -609,11 +356,6 @@ impl GameState {
                 self.scoreboard.pins_remaining,
                 standing
             );
-
-            self.send_message(ClientMessage::ReportThrowResult {
-                knocked_pins: knocked,
-                standing_pins: standing,
-            });
 
             self.send_message(ClientMessage::ReportThrowResult {
                 knocked_pins: knocked,
@@ -858,7 +600,7 @@ impl GameState {
                 self.session_role = Some(SessionRole::Host);
                 self.lobby_code = code.clone();
                 self.persist_role_session(SessionRole::Host, &code, &host_session);
-                self.update_lobby_ui(&code, &players);
+                rendering::update_lobby_ui(self, &code, &players);
                 self.screen = Screen::Host;
             }
             ServerMessage::LobbyJoined {
@@ -871,14 +613,14 @@ impl GameState {
                 self.player_id = player_id;
                 self.lobby_code = code.clone();
                 self.persist_role_session(SessionRole::Player, &code, &player_session);
-                self.update_lobby_ui(&code, &players);
+                rendering::update_lobby_ui(self, &code, &players);
                 self.info_text = format!("Joined lobby {code}. Waiting for host to start...");
                 self.screen = Screen::Info;
             }
             ServerMessage::ReconnectOkHost { code, players } => {
                 self.session_role = Some(SessionRole::Host);
                 self.lobby_code = code.clone();
-                self.update_lobby_ui(&code, &players);
+                rendering::update_lobby_ui(self, &code, &players);
                 self.screen = Screen::Host;
             }
             ServerMessage::ReconnectOkPlayer {
@@ -891,11 +633,11 @@ impl GameState {
                 self.player_id = player_id;
                 self.lobby_code = code.clone();
                 self.persist_role_session(SessionRole::Player, &code, &player_session);
-                self.update_lobby_ui(&code, &players);
+                rendering::update_lobby_ui(self, &code, &players);
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::LobbyUpdated { code, players } => {
-                self.update_lobby_ui(&code, &players);
+                rendering::update_lobby_ui(self, &code, &players);
             }
             ServerMessage::GameStarted {
                 code,
@@ -987,42 +729,8 @@ impl GameState {
         }
     }
 
-    fn update_lobby_ui(&mut self, code: &str, players: &[PlayerInfo]) {
-        self.lobby_code = code.to_string();
-        self.players = players.to_vec();
-        let mut room_code = self.base_mut().get_node_as::<Label>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/RoomCodeValue");
-        room_code.set_text(&GString::from(code));
-
-        let mut players_box = self.base_mut().get_node_as::<VBoxContainer>("UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Players");
-        let children = players_box.get_children();
-        for mut child in children.iter_shared() {
-            players_box.remove_child(&child);
-            child.queue_free();
-        }
-        for player in players {
-            let mut label = Label::new_alloc();
-            let suffix = if player.connected {
-                ""
-            } else {
-                " (reconnecting...)"
-            };
-            let line = format!("{}{}", player.username, suffix);
-            label.set_text(&GString::from(line.as_str()));
-            players_box.add_child(&label);
-        }
-    }
-
-    fn render_info_text(&mut self) {
-        let mut info_label = self.base_mut().get_node_as::<Label>("UiManager/Info/Label");
-        if self.info_text.is_empty() {
-            info_label.set_text("Loading...");
-        } else {
-            info_label.set_text(&GString::from(self.info_text.as_str()));
-        }
-    }
-
     fn ensure_username(&self) {
-        let username = self.get_storage(STORAGE_USERNAME);
+        let username = storage::get_value(self, storage::STORAGE_USERNAME);
         if !username.trim().is_empty() {
             return;
         }
@@ -1035,11 +743,15 @@ impl GameState {
                 chars[idx] as char
             })
             .collect();
-        self.set_storage(STORAGE_USERNAME, &format!("Player_{rand_part}"));
+        storage::set_value(
+            self,
+            storage::STORAGE_USERNAME,
+            &format!("Player_{rand_part}"),
+        );
     }
 
     fn sync_username_input(&mut self) {
-        let username = self.get_storage(STORAGE_USERNAME);
+        let username = storage::get_value(self, storage::STORAGE_USERNAME);
         if username.trim().is_empty() {
             return;
         }
@@ -1052,21 +764,22 @@ impl GameState {
     }
 
     fn load_calibration(&mut self) {
-        let raw = self.get_storage(STORAGE_CALIBRATION_X);
+        let raw = storage::get_value(self, storage::STORAGE_CALIBRATION_X);
         self.calibration_offset_x = raw.parse::<f32>().unwrap_or(0.0);
     }
 
     fn save_calibration(&self) {
-        self.set_storage(
-            STORAGE_CALIBRATION_X,
+        storage::set_value(
+            self,
+            storage::STORAGE_CALIBRATION_X,
             &format!("{}", self.calibration_offset_x),
         );
     }
 
     fn try_auto_reconnect(&mut self) {
-        let role = self.get_storage(STORAGE_ROLE);
-        let token = self.get_storage(STORAGE_TOKEN);
-        let code = self.get_storage(STORAGE_CODE);
+        let role = storage::get_value(self, storage::STORAGE_ROLE);
+        let token = storage::get_value(self, storage::STORAGE_TOKEN);
+        let code = storage::get_value(self, storage::STORAGE_CODE);
         if role.is_empty() || token.is_empty() || code.is_empty() {
             return;
         }
@@ -1095,15 +808,15 @@ impl GameState {
             SessionRole::Host => "host",
             SessionRole::Player => "player",
         };
-        self.set_storage(STORAGE_ROLE, role_str);
-        self.set_storage(STORAGE_TOKEN, session);
-        self.set_storage(STORAGE_CODE, code);
+        storage::set_value(self, storage::STORAGE_ROLE, role_str);
+        storage::set_value(self, storage::STORAGE_TOKEN, session);
+        storage::set_value(self, storage::STORAGE_CODE, code);
     }
 
     fn clear_session_keys(&self) {
-        self.clear_storage(STORAGE_ROLE);
-        self.clear_storage(STORAGE_TOKEN);
-        self.clear_storage(STORAGE_CODE);
+        storage::clear_value(self, storage::STORAGE_ROLE);
+        storage::clear_value(self, storage::STORAGE_TOKEN);
+        storage::clear_value(self, storage::STORAGE_CODE);
     }
 
     fn get_join_username(&mut self) -> String {
@@ -1112,40 +825,12 @@ impl GameState {
             .get_node_as::<LineEdit>("UiManager/Mobile/VBoxContainer/Username");
         let typed = username_input.get_text().to_string().trim().to_string();
         if !typed.is_empty() {
-            self.set_storage(STORAGE_USERNAME, &typed);
+            storage::set_value(self, storage::STORAGE_USERNAME, &typed);
             return typed;
         }
-        let fallback = self.get_storage(STORAGE_USERNAME);
+        let fallback = storage::get_value(self, storage::STORAGE_USERNAME);
         username_input.set_text(&GString::from(fallback.as_str()));
         fallback
-    }
-
-    fn get_storage(&self, key: &str) -> String {
-        let Some(mut bridge) = self.base().get_node_or_null("WebBridge") else {
-            return String::new();
-        };
-        bridge
-            .call("get_local_value", &[key.to_variant()])
-            .try_to::<GString>()
-            .unwrap_or_default()
-            .to_string()
-    }
-
-    fn set_storage(&self, key: &str, value: &str) {
-        let Some(mut bridge) = self.base().get_node_or_null("WebBridge") else {
-            return;
-        };
-        bridge.call(
-            "set_local_value",
-            &[key.to_variant(), GString::from(value).to_variant()],
-        );
-    }
-
-    fn clear_storage(&self, key: &str) {
-        let Some(mut bridge) = self.base().get_node_or_null("WebBridge") else {
-            return;
-        };
-        bridge.call("clear_local_value", &[key.to_variant()]);
     }
 
     fn update_leave_hold(&mut self, delta: f64) {
@@ -1290,7 +975,6 @@ impl GameState {
         self.controller_holding = true;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
-        //self.controller_baseline_accel = self.accel;
         self.controller_motion_history.clear();
         self.controller_motion_history.push_back(self.accel);
     }
@@ -1310,7 +994,7 @@ impl GameState {
         self.controller_motion_history.clear();
         if self.calibration_active {
             self.calibration_samples.push(direction.x);
-            if self.calibration_samples.len() >= CALIBRATION_THROW_COUNT {
+            if self.calibration_samples.len() >= controller::CALIBRATION_THROW_COUNT {
                 let sum: f32 = self.calibration_samples.iter().copied().sum();
                 self.calibration_offset_x = sum / self.calibration_samples.len() as f32;
                 self.save_calibration();
@@ -1322,7 +1006,8 @@ impl GameState {
         }
         if self.is_local_player_turn() {
             let corrected_x = direction.x - self.calibration_offset_x;
-            let corrected_x = soft_deadzone(corrected_x, BOWLING_SIDEWAYS_DEADZONE);
+            let corrected_x =
+                controller::soft_deadzone(corrected_x, controller::BOWLING_SIDEWAYS_DEADZONE);
 
             let corrected = Vector2::new(corrected_x, direction.y).normalized();
 
@@ -1345,18 +1030,7 @@ impl GameState {
         self.controller_holding = false;
         self.controller_force = 0.0;
         self.controller_direction = Vector2::new(0.0, 1.0);
-        //self.controller_baseline_accel = Vector3::ZERO;
         self.controller_motion_history.clear();
         self.screen = Screen::Controller;
     }
-}
-
-fn soft_deadzone(value: f32, deadzone: f32) -> f32 {
-    let abs = value.abs();
-
-    if abs <= deadzone {
-        return 0.0;
-    }
-
-    value.signum() * ((abs - deadzone) / (1.0 - deadzone)).clamp(0.0, 1.0)
 }
