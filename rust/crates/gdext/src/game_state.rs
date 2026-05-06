@@ -28,7 +28,7 @@ const BOWLING_SWING_MIN_FORCE: f32 = 1.6;
 const BOWLING_SWING_MAX_ANGLE_DEG: f32 = 45.0;
 const BOWLING_SIDEWAYS_DEADZONE: f32 = 0.08;
 const CALIBRATION_THROW_COUNT: usize = 3;
-const THROW_SETTLE_SECS: f64 = 2.0;
+const THROW_SETTLE_SECS: f64 = 3.0;
 const LEAVE_HOLD_SECS: f64 = 5.0;
 
 #[derive(Clone, Copy, Default)]
@@ -599,9 +599,21 @@ impl GameState {
             self.host_throw_settle_secs = 0.0;
 
             let fallen_count = self.current_fallen_count();
-            let knocked = (fallen_count - self.host_throw_start_fallen).max(0) as u8;
+            let knocked = fallen_count.clamp(0, self.scoreboard.pins_remaining as i32) as u8;
+            let standing = self.scoreboard.pins_remaining - knocked;
 
-            let standing = self.scoreboard.pins_remaining.saturating_sub(knocked);
+            godot_print!(
+                "REPORT throw: fallen={}, knocked={}, remaining={}, standing={}",
+                fallen_count,
+                knocked,
+                self.scoreboard.pins_remaining,
+                standing
+            );
+
+            self.send_message(ClientMessage::ReportThrowResult {
+                knocked_pins: knocked,
+                standing_pins: standing,
+            });
 
             self.send_message(ClientMessage::ReportThrowResult {
                 knocked_pins: knocked,
