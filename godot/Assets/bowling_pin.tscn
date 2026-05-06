@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" uid="uid://b6m687fes2s53" path="res://RawAssets/BowlingPin.blend" id="1_3jdpi"]
 [ext_resource type="Script" uid="uid://c3rkgftupewku" path="res://Scripts/bowling_pin.gd" id="2_yk006"]
-[ext_resource type="Script" uid="uid://cojgu31yy73u6" path="res://Assets/pin_rigid_body_3d.gd" id="3_kepl1"]
+[ext_resource type="Script" uid="uid://cojgu31yy73u6" path="res://Scripts/pin_rigid_body_3d.gd" id="3_kepl1"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_li7ct"]
 friction = 0.4
