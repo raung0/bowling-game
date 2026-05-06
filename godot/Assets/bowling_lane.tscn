@@ -1,0 +1,36 @@
+[gd_scene format=3 uid="uid://dg7dj2q42dqak"]
+
+[ext_resource type="PackedScene" uid="uid://demikt7osrx08" path="res://RawAssets/BowlingLane.blend" id="1_gcdsn"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_gcdsn"]
+friction = 0.1
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_gcdsn"]
+size = Vector3(19.01, 1, 1.06)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_7jp6w"]
+size = Vector3(19.01, 1, 1.55)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_yh81d"]
+size = Vector3(19.01, 1, 0.2)
+
+[node name="BowlingLane" unique_id=1987325189 instance=ExtResource("1_gcdsn")]
+
+[node name="StaticBody3D" type="StaticBody3D" parent="." index="2" unique_id=1161392802]
+physics_material_override = SubResource("PhysicsMaterial_gcdsn")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D" index="0" unique_id=355955717]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+shape = SubResource("BoxShape3D_gcdsn")
+
+[node name="CollisionShape3D4" type="CollisionShape3D" parent="StaticBody3D" index="1" unique_id=383213883]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.55207634, 0)
+shape = SubResource("BoxShape3D_7jp6w")
+
+[node name="CollisionShape3D2" type="CollisionShape3D" parent="StaticBody3D" index="2" unique_id=42597587]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0.86)
+shape = SubResource("BoxShape3D_yh81d")
+
+[node name="CollisionShape3D3" type="CollisionShape3D" parent="StaticBody3D" index="3" unique_id=1277076121]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, -0.86)
+shape = SubResource("BoxShape3D_yh81d")

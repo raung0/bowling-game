@@ -34,6 +34,32 @@ func get_accelerometer() -> Vector3:
 func is_mobile() -> bool:
 	return mobile
 
+func get_local_value(key: String) -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var value = JavaScriptBridge.eval("window.localStorage ? window.localStorage.getItem('%s') : null" % key, true)
+	if value == null:
+		return ""
+	return str(value)
+
+func set_local_value(key: String, value: String) -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("window.localStorage && window.localStorage.setItem('%s', '%s');" % [_escape_js(key), _escape_js(value)], true)
+
+func clear_local_value(key: String) -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("window.localStorage && window.localStorage.removeItem('%s');" % _escape_js(key), true)
+
+func get_ws_url() -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var value = JavaScriptBridge.eval("(function(){ var p = window.location && window.location.protocol === 'https:' ? 'wss:' : 'ws:'; var h = window.location ? window.location.host : ''; return h ? (p + '//' + h + '/ws') : ''; })();", true)
+	if value == null:
+		return ""
+	return str(value)
+
 func _start_motion() -> void:
 	JavaScriptBridge.eval("window.godotMotion && window.godotMotion.start && window.godotMotion.start();", true)
 
@@ -96,3 +122,6 @@ func _to_float(value: Variant) -> float:
 	if value is int:
 		return float(value)
 	return 0.0
+
+func _escape_js(s: String) -> String:
+	return s.replace("\\", "\\\\").replace("'", "\\'")

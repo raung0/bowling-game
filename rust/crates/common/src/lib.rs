@@ -2,13 +2,66 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Request {
-    Ping,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientMessage {
+    CreateLobby,
+    JoinLobby {
+        code: String,
+        username: String,
+    },
+    ReconnectPlayer {
+        code: String,
+        player_session: String,
+    },
+    ReconnectHost {
+        code: String,
+        host_session: String,
+    },
+    Leave,
+    StartGame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Response {
-    Pong,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMessage {
+    LobbyCreated {
+        code: String,
+        host_session: String,
+        players: Vec<PlayerInfo>,
+    },
+    LobbyJoined {
+        code: String,
+        player_session: String,
+        players: Vec<PlayerInfo>,
+    },
+    LobbyUpdated {
+        code: String,
+        players: Vec<PlayerInfo>,
+    },
+    ReconnectOkHost {
+        code: String,
+        players: Vec<PlayerInfo>,
+    },
+    ReconnectOkPlayer {
+        code: String,
+        player_session: String,
+        players: Vec<PlayerInfo>,
+    },
+    GameStarted {
+        code: String,
+    },
+    Info {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerInfo {
+    pub username: String,
+    pub connected: bool,
 }
 
 #[derive(Debug, Error)]
@@ -21,29 +74,17 @@ pub enum Error {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RawResponse {
-    status: String,
-    response: Option<Response>,
-    value: Option<String>,
-}
-
-impl Response {
-    pub fn from_str(s: &str) -> Result<Response, Error> {
-        let raw: RawResponse = serde_json::from_str(s)?;
-        if raw.status != "ok" {
-            return Err(Error::ServerError(
-                raw.value.unwrap_or("no error value provided".into()),
-            ));
-        } else if let Some(v) = raw.response {
-            Ok(v)
-        } else {
-            Err(Error::Unknown)
-        }
+impl ClientMessage {
+    pub fn encode(&self) -> serde_json::Result<String> {
+        serde_json::to_string(self)
     }
 }
 
-impl Request {
+impl ServerMessage {
+    pub fn from_str(s: &str) -> Result<ServerMessage, Error> {
+        Ok(serde_json::from_str(s)?)
+    }
+
     pub fn encode(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }

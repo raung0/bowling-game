@@ -1,0 +1,36 @@
+[gd_scene format=3 uid="uid://dvcg5rqbbpuvt"]
+
+[ext_resource type="PackedScene" uid="uid://dg7dj2q42dqak" path="res://Assets/bowling_lane.tscn" id="1_wbfu4"]
+[ext_resource type="PackedScene" uid="uid://domarjvmu8sst" path="res://Assets/AllPins.tscn" id="1_xkndl"]
+[ext_resource type="PackedScene" uid="uid://udpeyc7w8g73" path="res://Assets/bowling_pin.tscn" id="2_xkndl"]
+[ext_resource type="PackedScene" uid="uid://c4lxwj7yridtd" path="res://Assets/bowling_ball.tscn" id="4_sb48q"]
+[ext_resource type="Script" uid="uid://rtchpd2ay8pw" path="res://Assets/bowling_ball.gd" id="5_t88pq"]
+
+[node name="GameManager" type="GameManager" unique_id=2057015636]
+spawn_position = NodePath("PinsSpawnPoint")
+all_pins_scene = ExtResource("1_xkndl")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1705421882]
+transform = Transform3D(0.87855047, -0.06282528, -0.47349977, 0.4776495, 0.11555581, 0.8709178, 0, -0.9913122, 0.13153008, 0, 0, 0)
+
+[node name="PinsSpawnPoint" type="Node3D" parent="." unique_id=1739615299]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.182, 0.1, 0)
+
+[node name="BowlingLane" parent="." unique_id=647634671 instance=ExtResource("1_wbfu4")]
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1042158667]
+transform = Transform3D(-3.7855173e-08, 0.5, -0.8660254, 2.1855694e-08, 0.8660254, 0.5, 1, 0, -4.371139e-08, 7.816777, 0.99437046, 0)
+current = true
+
+[node name="BowlingPin" parent="." unique_id=462140216 instance=ExtResource("2_xkndl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.542788, -3.5514338e-07, 0.34225178)
+
+[node name="BowlingPin2" parent="." unique_id=1707460879 instance=ExtResource("2_xkndl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.651022, -1.487905e-07, 0.4758667)
+
+[node name="BowlingPin3" parent="." unique_id=189335809 instance=ExtResource("2_xkndl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.506998, 0.17199638, 0.48493734)
+
+[node name="BowlingBall" parent="." unique_id=1800342674 instance=ExtResource("4_sb48q")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.6551914, 0.13879558, -0.057415247)
+script = ExtResource("5_t88pq")

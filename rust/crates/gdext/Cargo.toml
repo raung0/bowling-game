@@ -7,7 +7,9 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
+common = { path = "../common" }
 getset = "0.1"
+rand = "0.9"
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "emscripten")))'.dependencies.godot]
 git = "https://github.com/godot-rust/gdext"
