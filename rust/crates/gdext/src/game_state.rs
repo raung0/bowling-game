@@ -1,10 +1,13 @@
 use common::{ClientMessage, PlayerInfo, ServerMessage};
 use getset::Getters;
 use godot::{
+    classes::web_socket_peer::State as WebSocketState,
     classes::{Button, Label, LineEdit, Node, VBoxContainer, WebSocketPeer},
+    global::Error,
     prelude::*,
 };
 use rand::Rng;
+use std::str::FromStr;
 
 use crate::ui_manager::UiManager;
 
@@ -12,19 +15,15 @@ const STORAGE_ROLE: &str = "session_role";
 const STORAGE_TOKEN: &str = "session_token";
 const STORAGE_CODE: &str = "lobby_code";
 const STORAGE_USERNAME: &str = "username";
+const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum Screen {
+    #[default]
     MainMenu,
     Host,
     Info,
     Game,
-}
-
-impl Default for Screen {
-    fn default() -> Self {
-        Screen::MainMenu
-    }
 }
 
 #[derive(Clone)]
@@ -44,6 +43,8 @@ pub struct GameState {
     screen: Screen,
     info_text: String,
     ws: Option<Gd<WebSocketPeer>>,
+    pending_messages: Vec<String>,
+    pending_connect_secs: f64,
 
     base: Base<Node>,
 }
@@ -58,6 +59,8 @@ impl INode for GameState {
             screen: Screen::default(),
             info_text: String::new(),
             ws: None,
+            pending_messages: Vec::new(),
+            pending_connect_secs: 0.0,
         }
     }
 
@@ -86,7 +89,7 @@ impl INode for GameState {
         self.try_auto_reconnect();
     }
 
-    fn process(&mut self, _delta: f64) {
+    fn process(&mut self, delta: f64) {
         self.accel = self.browser_accel();
         self.is_mobile = self.is_mobile_web();
 
@@ -104,6 +107,7 @@ impl INode for GameState {
             .set_screen(self.screen, self.is_mobile);
 
         self.poll_socket();
+        self.handle_socket_connect_timeout(delta);
         self.render_info_text();
     }
 }
@@ -164,28 +168,129 @@ impl GameState {
         }
         let mut ws = WebSocketPeer::new_gd();
         let url = self.ws_url();
-        let _ = ws.connect_to_url(&GString::from(url.as_str()));
+        let result = ws.connect_to_url(&GString::from(url.as_str()));
+        if result != Error::OK {
+            self.info_text = format!("Could not connect to server at {url}");
+            self.screen = Screen::Info;
+            self.pending_messages.clear();
+            return;
+        }
         self.ws = Some(ws);
     }
 
     fn send_message(&mut self, msg: ClientMessage) {
         self.ensure_socket();
-        let Some(ws) = self.ws.as_mut() else { return };
         if let Ok(encoded) = msg.encode() {
-            let _ = ws.send_text(&GString::from(encoded.as_str()));
+            self.pending_messages.push(encoded);
+            self.flush_pending_messages();
         }
     }
 
-    fn poll_socket(&mut self) {
+    fn flush_pending_messages(&mut self) {
         let Some(ws) = self.ws.as_mut() else { return };
-        let _ = ws.poll();
+        if self.pending_messages.is_empty() {
+            return;
+        }
+
+        if ws.get_ready_state() != WebSocketState::OPEN {
+            return;
+        }
+
+        let mut sent_count = 0usize;
+        for message in &self.pending_messages {
+            if ws.send_text(&GString::from(message.as_str())) == Error::OK {
+                sent_count += 1;
+            } else {
+                break;
+            }
+        }
+
+        if sent_count > 0 {
+            self.pending_messages.drain(0..sent_count);
+            if self.pending_messages.is_empty() {
+                self.pending_connect_secs = 0.0;
+            }
+        }
+    }
+
+    fn handle_socket_connect_timeout(&mut self, delta: f64) {
+        if self.pending_messages.is_empty() {
+            self.pending_connect_secs = 0.0;
+            return;
+        }
+
+        let Some(ws) = self.ws.as_ref() else {
+            self.pending_connect_secs += delta;
+            if self.pending_connect_secs >= SOCKET_CONNECT_TIMEOUT_SECS {
+                let url = self.ws_url();
+                self.info_text = format!("Could not connect to server at {url}");
+                self.screen = Screen::Info;
+                self.pending_messages.clear();
+                self.pending_connect_secs = 0.0;
+            }
+            return;
+        };
+
+        if ws.get_ready_state() == WebSocketState::OPEN {
+            self.pending_connect_secs = 0.0;
+            return;
+        }
+
+        self.pending_connect_secs += delta;
+        if self.pending_connect_secs < SOCKET_CONNECT_TIMEOUT_SECS {
+            return;
+        }
+
+        let url = self.ws_url();
+        let mut message = format!("Could not connect to server at {url}");
+        if ws.get_ready_state() == WebSocketState::CLOSED {
+            let code = ws.get_close_code();
+            let reason = ws.get_close_reason().to_string();
+            if code != -1 {
+                if reason.is_empty() {
+                    message = format!("WebSocket closed (code {code}) while connecting to {url}");
+                } else {
+                    message = format!(
+                        "WebSocket closed (code {code}: {reason}) while connecting to {url}"
+                    );
+                }
+            }
+        }
+
+        self.info_text = message;
+        self.screen = Screen::Info;
+        self.pending_messages.clear();
+        self.pending_connect_secs = 0.0;
+        self.ws = None;
+    }
+
+    fn poll_socket(&mut self) {
+        let mut should_reset_socket = false;
+        {
+            let Some(ws) = self.ws.as_mut() else { return };
+            ws.poll();
+            if ws.get_ready_state() == WebSocketState::CLOSED {
+                should_reset_socket = true;
+            }
+        }
+
+        if should_reset_socket {
+            self.ws = None;
+            if !self.pending_messages.is_empty() {
+                self.ensure_socket();
+            }
+        }
+
+        self.flush_pending_messages();
 
         let mut messages = Vec::new();
-        while ws.get_available_packet_count() > 0 {
-            let packet = ws.get_packet();
-            let text = String::from_utf8(packet.to_vec()).unwrap_or_default();
-            if !text.is_empty() {
-                messages.push(text);
+        if let Some(ws) = self.ws.as_mut() {
+            while ws.get_available_packet_count() > 0 {
+                let packet = ws.get_packet();
+                let text = String::from_utf8(packet.to_vec()).unwrap_or_default();
+                if !text.is_empty() {
+                    messages.push(text);
+                }
             }
         }
 

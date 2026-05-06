@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,11 +81,15 @@ impl ClientMessage {
     }
 }
 
-impl ServerMessage {
-    pub fn from_str(s: &str) -> Result<ServerMessage, Error> {
+impl FromStr for ServerMessage {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(serde_json::from_str(s)?)
     }
+}
 
+impl ServerMessage {
     pub fn encode(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }

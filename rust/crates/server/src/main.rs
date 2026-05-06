@@ -103,18 +103,22 @@ async fn cleanup_timeouts(state: &SharedState) {
         let mut disconnect_players = Vec::new();
 
         for (code, lobby) in &s.lobbies {
-            if let Some(at) = lobby.host_disconnected_at {
-                if now.duration_since(at) > RECONNECT_TIMEOUT {
-                    close_lobbies.push(code.clone());
-                    continue;
-                }
+            if let Some(at) = lobby.host_disconnected_at
+                && now.duration_since(at) > RECONNECT_TIMEOUT
+            {
+                close_lobbies.push(code.clone());
+                continue;
             }
 
             for (player_id, player) in &lobby.players {
-                if let Some(at) = player.disconnected_at {
-                    if now.duration_since(at) > RECONNECT_TIMEOUT {
-                        disconnect_players.push((code.clone(), player_id.clone(), player.session.clone()));
-                    }
+                if let Some(at) = player.disconnected_at
+                    && now.duration_since(at) > RECONNECT_TIMEOUT
+                {
+                    disconnect_players.push((
+                        code.clone(),
+                        player_id.clone(),
+                        player.session.clone(),
+                    ));
                 }
             }
         }
@@ -361,11 +365,11 @@ async fn disconnect_connection(state: &SharedState, role: &ConnectionRole) {
             let Some(sref) = s.player_sessions.get(session) else { return };
             if sref.code != *code { return }
             let player_id = sref.player_id.clone();
-            if let Some(lobby) = s.lobbies.get_mut(code) {
-                if let Some(player) = lobby.players.get_mut(&player_id) {
-                    player.tx = None;
-                    player.disconnected_at = Some(now);
-                }
+            if let Some(lobby) = s.lobbies.get_mut(code)
+                && let Some(player) = lobby.players.get_mut(&player_id)
+            {
+                player.tx = None;
+                player.disconnected_at = Some(now);
             }
             let players = s.lobbies.get(code).map(lobby_players);
             drop(s);
@@ -439,7 +443,15 @@ async fn broadcast_lobby(state: &SharedState, code: &str, msg: &ServerMessage) {
     let txs = {
         let s = state.lock().await;
         let Some(lobby) = s.lobbies.get(code) else { return };
-        lobby.players.values().filter_map(|p| p.tx.clone()).collect::<Vec<_>>()
+        let mut txs = lobby
+            .players
+            .values()
+            .filter_map(|p| p.tx.clone())
+            .collect::<Vec<_>>();
+        if let Some(host_tx) = lobby.host_tx.clone() {
+            txs.push(host_tx);
+        }
+        txs
     };
 
     for tx in txs {

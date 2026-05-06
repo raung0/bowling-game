@@ -1,11 +1,12 @@
 [gd_scene format=3 uid="uid://dbjivejplralk"]
 
+[ext_resource type="PackedScene" uid="uid://dvcg5rqbbpuvt" path="res://Game.tscn" id="1_h2yge"]
 [ext_resource type="PackedScene" uid="uid://dy3wsajldrccu" path="res://UI.tscn" id="1_ig7tw"]
-[ext_resource type="Script" path="res://web_bridge.gd" id="2_wb8h2"]
+[ext_resource type="Script" uid="uid://o6a122pfj4md" path="res://web_bridge.gd" id="2_wb8h2"]
 
 [node name="GameState" type="GameState" unique_id=99481752]
 
-[node name="Content" type="Node" parent="." unique_id=1659114147]
+[node name="GameManager" parent="." unique_id=2057015636 instance=ExtResource("1_h2yge")]
 
 [node name="WebBridge" type="Node" parent="." unique_id=932988767]
 script = ExtResource("2_wb8h2")
