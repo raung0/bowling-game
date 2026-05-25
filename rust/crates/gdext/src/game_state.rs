@@ -1,4 +1,8 @@
-use common::{ClientMessage, PlayerInfo, ScoreboardState, ServerMessage};
+use common::{
+    ClientMessage, PlayerInfo, ScoreboardState, ServerMessage, BALL_MOVE_Z_MAX, BALL_MOVE_Z_MIN,
+    BALL_MOVE_Z_STEP, BALL_ROT_Y_MAX_DEG, BALL_ROT_Y_STEP_DEG,
+    CONTROLLER_HOLD_REPEAT_DELAY_SECS, CONTROLLER_HOLD_REPEAT_INTERVAL_SECS,
+};
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
@@ -34,6 +38,14 @@ enum SessionRole {
     Player,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BallSetupAction {
+    MoveLeft,
+    MoveRight,
+    RotateLeft,
+    RotateRight,
+}
+
 #[derive(GodotClass, Getters)]
 #[class(base=Node)]
 pub struct GameState {
@@ -67,6 +79,10 @@ pub struct GameState {
     host_throw_settle_secs: f64,
     pending_ball_respawn: bool,
     ball_start_initial_transform: Option<Transform3D>,
+    ball_setup_action: Option<BallSetupAction>,
+    ball_setup_hold_secs: f64,
+    ball_setup_next_repeat_secs: f64,
+    zoomed_in: bool,
     leave_holding: bool,
     leave_hold_secs: f64,
 
@@ -105,6 +121,10 @@ impl INode for GameState {
             host_throw_settle_secs: 0.0,
             pending_ball_respawn: false,
             ball_start_initial_transform: None,
+            ball_setup_action: None,
+            ball_setup_hold_secs: 0.0,
+            ball_setup_next_repeat_secs: 0.0,
+            zoomed_in: false,
             leave_holding: false,
             leave_hold_secs: 0.0,
         }
@@ -113,6 +133,7 @@ impl INode for GameState {
     fn ready(&mut self) {
         self.base_mut().set_process(true);
         self.capture_ball_start_initial_transform();
+        self.set_zoomed_in(false);
         self.pending_ball_respawn = true;
 
         let mut join_button = self
@@ -142,6 +163,18 @@ impl INode for GameState {
         let mut hold_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
+        let mut move_left_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Move/Left");
+        let mut move_right_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Move/Right");
+        let mut rotate_left_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Rotate/Left");
+        let mut rotate_right_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Rotate/Right");
         let mut controller_back_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/BackToMenu");
@@ -151,6 +184,9 @@ impl INode for GameState {
         let mut game_stop_button = self.base().get_node_as::<Button>(
             "UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton",
         );
+        let mut zoom_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Zoom");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
@@ -163,11 +199,20 @@ impl INode for GameState {
         host_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
         hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
+        move_left_button.connect("button_down", &self.base().callable("on_move_left_button_down"));
+        move_left_button.connect("button_up", &self.base().callable("on_move_button_up"));
+        move_right_button.connect("button_down", &self.base().callable("on_move_right_button_down"));
+        move_right_button.connect("button_up", &self.base().callable("on_move_button_up"));
+        rotate_left_button.connect("button_down", &self.base().callable("on_rotate_left_button_down"));
+        rotate_left_button.connect("button_up", &self.base().callable("on_rotate_button_up"));
+        rotate_right_button.connect("button_down", &self.base().callable("on_rotate_right_button_down"));
+        rotate_right_button.connect("button_up", &self.base().callable("on_rotate_button_up"));
         controller_back_button
             .connect("button_down", &self.base().callable("on_leave_button_down"));
         controller_back_button.connect("button_up", &self.base().callable("on_leave_button_up"));
         game_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         game_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
+        zoom_button.connect("pressed", &self.base().callable("on_zoom_pressed"));
 
         self.ensure_username();
         self.load_calibration();
@@ -183,6 +228,7 @@ impl INode for GameState {
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
         self.update_controller_strength();
+        self.update_ball_setup_hold(delta);
         self.update_leave_hold(delta);
         self.maybe_finish_host_throw(delta);
 
@@ -226,6 +272,7 @@ impl INode for GameState {
             controller_force,
             controller_direction,
             controller_enabled,
+            self.zoomed_in,
         );
         rendering::render_game_ui(self, &current_player_label, &lobby_code, is_host);
         rendering::render_scoreboard(self, &scoreboard);
@@ -314,6 +361,110 @@ impl GameState {
         start.set_global_transform(initial_transform);
     }
 
+    fn ball_setup_adjustment(action: BallSetupAction) -> (f32, f32) {
+        match action {
+            BallSetupAction::MoveLeft => (-BALL_MOVE_Z_STEP, 0.0),
+            BallSetupAction::MoveRight => (BALL_MOVE_Z_STEP, 0.0),
+            BallSetupAction::RotateLeft => (0.0, BALL_ROT_Y_STEP_DEG),
+            BallSetupAction::RotateRight => (0.0, -BALL_ROT_Y_STEP_DEG),
+        }
+    }
+
+    fn apply_ball_setup_adjustment(&mut self, move_z_delta: f32, rotate_y_delta_deg: f32) {
+        if self.host_ball_was_launched || self.host_throw_waiting_report {
+            return;
+        }
+
+        let Some(mut start) = self.try_ball_start_point() else {
+            return;
+        };
+
+        if move_z_delta != 0.0 {
+            let mut position = start.get_global_position();
+            position.z = (position.z + move_z_delta).clamp(BALL_MOVE_Z_MIN, BALL_MOVE_Z_MAX);
+            start.set_global_position(position);
+        }
+
+        if rotate_y_delta_deg != 0.0 {
+            let mut rotation = start.get_global_rotation();
+            let max_y = BALL_ROT_Y_MAX_DEG.to_radians();
+            rotation.y = (rotation.y + rotate_y_delta_deg.to_radians()).clamp(-max_y, max_y);
+            start.set_global_rotation(rotation);
+        }
+    }
+
+    fn push_ball_setup_log(&self, player_id: &str, move_z_delta: f32, rotate_y_delta_deg: f32) {
+        godot_print!(
+            "ball setup adjust from {}: move_z_delta={:.3}, rotate_y_delta_deg={:.3}",
+            player_id,
+            move_z_delta,
+            rotate_y_delta_deg
+        );
+    }
+
+    fn set_zoomed_in(&mut self, zoomed_in: bool) {
+        if self.zoomed_in == zoomed_in {
+            return;
+        }
+
+        self.zoomed_in = zoomed_in;
+        self.stop_ball_setup_hold();
+
+        if let Some(mut normal_camera) = self
+            .base()
+            .get_node_or_null("GameManager/PhantomCameraNormal")
+        {
+            normal_camera.set("priority", &(if zoomed_in { 1 } else { 2 }).to_variant());
+        }
+
+        if let Some(mut zoom_camera) = self
+            .base()
+            .get_node_or_null("GameManager/PhantomCameraZoomedIn")
+        {
+            zoom_camera.set("priority", &(if zoomed_in { 2 } else { 0 }).to_variant());
+        }
+    }
+
+    fn start_ball_setup_hold(&mut self, action: BallSetupAction) {
+        if !self.is_local_player_turn() {
+            return;
+        }
+
+        self.ball_setup_action = Some(action);
+        self.ball_setup_hold_secs = 0.0;
+        self.ball_setup_next_repeat_secs = CONTROLLER_HOLD_REPEAT_DELAY_SECS as f64;
+
+        let (move_z_delta, rotate_y_delta_deg) = Self::ball_setup_adjustment(action);
+        self.send_message(ClientMessage::AdjustBallSetup {
+            move_z_delta,
+            rotate_y_delta_deg,
+        });
+    }
+
+    fn stop_ball_setup_hold(&mut self) {
+        self.ball_setup_action = None;
+        self.ball_setup_hold_secs = 0.0;
+        self.ball_setup_next_repeat_secs = 0.0;
+    }
+
+    fn update_ball_setup_hold(&mut self, delta: f64) {
+        let Some(action) = self.ball_setup_action else {
+            return;
+        };
+
+        self.ball_setup_hold_secs += delta;
+        if self.ball_setup_hold_secs < self.ball_setup_next_repeat_secs {
+            return;
+        }
+
+        let (move_z_delta, rotate_y_delta_deg) = Self::ball_setup_adjustment(action);
+        self.send_message(ClientMessage::AdjustBallSetup {
+            move_z_delta,
+            rotate_y_delta_deg,
+        });
+        self.ball_setup_next_repeat_secs += CONTROLLER_HOLD_REPEAT_INTERVAL_SECS as f64;
+    }
+
     fn request_ball_respawn(&mut self) {
         if let Some(mut ball) = self.try_ball() {
             ball.queue_free();
@@ -345,9 +496,14 @@ impl GameState {
         game_root.add_child(&ball);
         ball.bind_mut().reset_ball();
 
-        if let Some(mut phantom_camera) = game_root.get_node_or_null("PhantomCamera3D") {
-            phantom_camera.set("follow_target", &ball.to_variant());
-            phantom_camera.set("look_at_target", &ball.to_variant());
+        if let Some(mut normal_camera) = game_root.get_node_or_null("PhantomCameraNormal") {
+            normal_camera.set("follow_target", &ball.to_variant());
+            normal_camera.set("look_at_target", &ball.to_variant());
+        }
+
+        if let Some(mut zoom_camera) = game_root.get_node_or_null("PhantomCameraZoomedIn") {
+            zoom_camera.set("follow_target", &ball.to_variant());
+            zoom_camera.set("look_at_target", &ball.to_variant());
         }
 
         self.pending_ball_respawn = false;
@@ -720,6 +876,8 @@ impl GameState {
             } => {
                 self.lobby_code = code;
                 self.current_player_id = current_player_id;
+                self.stop_ball_setup_hold();
+                self.set_zoomed_in(false);
                 self.restore_ball_start_point_transform();
                 self.reset_lane_for_turn();
                 self.screen = self.gameplay_screen();
@@ -731,6 +889,8 @@ impl GameState {
                 self.controller_direction = Vector2::new(0.0, 1.0);
                 self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
+                self.stop_ball_setup_hold();
+                self.set_zoomed_in(false);
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::ThrowEvent {
@@ -744,6 +904,7 @@ impl GameState {
                 self.controller_direction = Vector2::new(0.0, 1.0);
                 self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
+                self.stop_ball_setup_hold();
                 if self.is_host()
                     && let Some(mut ball) = self.try_ball()
                 {
@@ -752,6 +913,22 @@ impl GameState {
                         .launch_throw(force, direction_x, direction_z);
                     self.restore_ball_start_point_transform();
                     self.host_ball_was_launched = true;
+                }
+            }
+            ServerMessage::AdjustBallSetup {
+                player_id,
+                move_z_delta,
+                rotate_y_delta_deg,
+            } => {
+                if self.is_host() {
+                    self.apply_ball_setup_adjustment(move_z_delta, rotate_y_delta_deg);
+                    self.push_ball_setup_log(&player_id, move_z_delta, rotate_y_delta_deg);
+                }
+            }
+            ServerMessage::ToggleZoom { player_id, zoomed_in } => {
+                if self.is_host() {
+                    self.set_zoomed_in(zoomed_in);
+                    godot_print!("zoom toggle from {}: {}", player_id, zoomed_in);
                 }
             }
             ServerMessage::ScoreboardUpdated { scoreboard } => {
@@ -770,6 +947,8 @@ impl GameState {
                 self.scoreboard = ScoreboardState::default();
                 self.current_player_id.clear();
                 self.host_throw_start_fallen = 0;
+                self.stop_ball_setup_hold();
+                self.set_zoomed_in(false);
                 self.screen = if self.is_host() {
                     Screen::Host
                 } else {
@@ -785,6 +964,8 @@ impl GameState {
                 self.controller_direction = Vector2::new(0.0, 1.0);
                 self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
+                self.stop_ball_setup_hold();
+                self.set_zoomed_in(false);
 
                 self.host_ball_was_launched = false;
                 self.host_throw_waiting_report = false;
@@ -987,6 +1168,7 @@ impl GameState {
 
     #[func]
     fn on_leave_button_down(&mut self) {
+        self.stop_ball_setup_hold();
         self.leave_holding = true;
         self.leave_hold_secs = 0.0;
         self.info_text = "Hold for 5 seconds to leave...".to_string();
@@ -1010,6 +1192,7 @@ impl GameState {
         if !self.is_host() {
             return;
         }
+        self.stop_ball_setup_hold();
         self.send_message(ClientMessage::StopGame);
         self.info_text = "Stopping game...".to_string();
         self.screen = Screen::Info;
@@ -1047,6 +1230,10 @@ impl GameState {
 
     #[func]
     fn on_hold_button_down(&mut self) {
+        if self.zoomed_in {
+            return;
+        }
+        self.stop_ball_setup_hold();
         if !(self.calibration_active || self.is_local_player_turn()) {
             return;
         }
@@ -1096,6 +1283,50 @@ impl GameState {
                 direction_z: corrected.y,
             });
         }
+
+        self.stop_ball_setup_hold();
+    }
+
+    #[func]
+    fn on_zoom_pressed(&mut self) {
+        if !(self.calibration_active || self.is_local_player_turn()) {
+            return;
+        }
+
+        self.set_zoomed_in(!self.zoomed_in);
+        self.send_message(ClientMessage::ToggleZoom {
+            zoomed_in: self.zoomed_in,
+        });
+    }
+
+    #[func]
+    fn on_move_left_button_down(&mut self) {
+        self.start_ball_setup_hold(BallSetupAction::MoveLeft);
+    }
+
+    #[func]
+    fn on_move_right_button_down(&mut self) {
+        self.start_ball_setup_hold(BallSetupAction::MoveRight);
+    }
+
+    #[func]
+    fn on_move_button_up(&mut self) {
+        self.stop_ball_setup_hold();
+    }
+
+    #[func]
+    fn on_rotate_left_button_down(&mut self) {
+        self.start_ball_setup_hold(BallSetupAction::RotateLeft);
+    }
+
+    #[func]
+    fn on_rotate_right_button_down(&mut self) {
+        self.start_ball_setup_hold(BallSetupAction::RotateRight);
+    }
+
+    #[func]
+    fn on_rotate_button_up(&mut self) {
+        self.stop_ball_setup_hold();
     }
 
     #[func]
@@ -1104,6 +1335,7 @@ impl GameState {
             return;
         }
 
+        self.stop_ball_setup_hold();
         self.calibration_active = true;
         self.calibration_samples.clear();
         self.controller_holding = false;

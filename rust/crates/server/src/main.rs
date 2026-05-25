@@ -466,6 +466,129 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     );
                 }
             }
+            ClientMessage::AdjustBallSetup {
+                move_z_delta,
+                rotate_y_delta_deg,
+            } => {
+                if let Some(ConnectionRole::Player { code, session }) = role.clone() {
+                    let validation = {
+                        let mut s = state.lock().await;
+                        match s.player_sessions.get(&session) {
+                            None => Err("player session not found".to_string()),
+                            Some(sref) => {
+                                if sref.code != code {
+                                    Err("player is not in this lobby".to_string())
+                                } else {
+                                    let player_id = sref.player_id.clone();
+                                    match s.lobbies.get_mut(&code) {
+                                        None => Err("lobby not found".to_string()),
+                                        Some(lobby) => {
+                                            if !lobby.game_in_progress {
+                                                Err("game has not started".to_string())
+                                            } else if lobby.current_turn.is_none() {
+                                                Err("no active player turn".to_string())
+                                            } else if !move_z_delta.is_finite()
+                                                || !rotate_y_delta_deg.is_finite()
+                                            {
+                                                Err("ball setup deltas must be finite".to_string())
+                                            } else if lobby
+                                                .current_turn
+                                                .and_then(|turn| lobby.player_order.get(turn))
+                                                != Some(&player_id)
+                                            {
+                                                Err("not your turn".to_string())
+                                            } else {
+                                                Ok(player_id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    match validation {
+                        Ok(player_id) => {
+                            broadcast_lobby(
+                                &state,
+                                &code,
+                                &ServerMessage::AdjustBallSetup {
+                                    player_id,
+                                    move_z_delta,
+                                    rotate_y_delta_deg,
+                                },
+                            )
+                            .await;
+                        }
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only players can adjust ball setup".into(),
+                        },
+                    );
+                }
+            }
+            ClientMessage::ToggleZoom { zoomed_in } => {
+                if let Some(ConnectionRole::Player { code, session }) = role.clone() {
+                    let validation = {
+                        let mut s = state.lock().await;
+                        match s.player_sessions.get(&session) {
+                            None => Err("player session not found".to_string()),
+                            Some(sref) => {
+                                if sref.code != code {
+                                    Err("player is not in this lobby".to_string())
+                                } else {
+                                    let player_id = sref.player_id.clone();
+                                    match s.lobbies.get_mut(&code) {
+                                        None => Err("lobby not found".to_string()),
+                                        Some(lobby) => {
+                                            if !lobby.game_in_progress {
+                                                Err("game has not started".to_string())
+                                            } else if lobby.current_turn.is_none() {
+                                                Err("no active player turn".to_string())
+                                            } else if lobby
+                                                .current_turn
+                                                .and_then(|turn| lobby.player_order.get(turn))
+                                                != Some(&player_id)
+                                            {
+                                                Err("not your turn".to_string())
+                                            } else {
+                                                Ok(player_id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    match validation {
+                        Ok(player_id) => {
+                            broadcast_lobby(
+                                &state,
+                                &code,
+                                &ServerMessage::ToggleZoom { player_id, zoomed_in },
+                            )
+                            .await;
+                        }
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only players can toggle zoom".into(),
+                        },
+                    );
+                }
+            }
             ClientMessage::ReportThrowResult {
                 knocked_pins,
                 standing_pins,

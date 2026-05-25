@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
+pub const BALL_MOVE_Z_MIN: f32 = -0.45;
+pub const BALL_MOVE_Z_MAX: f32 = 0.45;
+pub const BALL_MOVE_Z_STEP: f32 = 0.03;
+pub const BALL_ROT_Y_MAX_DEG: f32 = 45.0;
+pub const BALL_ROT_Y_STEP_DEG: f32 = 2.5;
+pub const CONTROLLER_HOLD_REPEAT_DELAY_SECS: f32 = 0.25;
+pub const CONTROLLER_HOLD_REPEAT_INTERVAL_SECS: f32 = 0.08;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
@@ -33,6 +41,13 @@ pub enum ClientMessage {
         player_ref: String,
     },
     StopGame,
+    AdjustBallSetup {
+        move_z_delta: f32,
+        rotate_y_delta_deg: f32,
+    },
+    ToggleZoom {
+        zoomed_in: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +90,15 @@ pub enum ServerMessage {
         force: f32,
         direction_x: f32,
         direction_z: f32,
+    },
+    AdjustBallSetup {
+        player_id: String,
+        move_z_delta: f32,
+        rotate_y_delta_deg: f32,
+    },
+    ToggleZoom {
+        player_id: String,
+        zoomed_in: bool,
     },
     ScoreboardUpdated {
         scoreboard: ScoreboardState,

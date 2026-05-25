@@ -44,6 +44,7 @@ pub fn render_controller_ui(
     force: f32,
     direction: Vector2,
     enabled: bool,
+    zoomed_in: bool,
 ) {
     let mut status_label = state
         .base_mut()
@@ -68,7 +69,7 @@ pub fn render_controller_ui(
     let mut hold_button = state
         .base_mut()
         .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/HoldButton");
-    hold_button.set_disabled(!enabled);
+    hold_button.set_disabled(!enabled || zoomed_in);
 }
 
 pub fn render_game_ui(

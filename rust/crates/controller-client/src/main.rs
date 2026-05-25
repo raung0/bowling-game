@@ -1,6 +1,10 @@
-use std::{collections::VecDeque, str::FromStr, sync::mpsc, thread};
+use std::{collections::VecDeque, str::FromStr, sync::mpsc, thread, time::{Duration, Instant}};
 
-use common::{ClientMessage, PlayerInfo, ScoreboardState, ServerMessage};
+use common::{
+    ClientMessage, PlayerInfo, ScoreboardState, ServerMessage, BALL_MOVE_Z_MAX,
+    BALL_MOVE_Z_MIN, BALL_MOVE_Z_STEP, BALL_ROT_Y_MAX_DEG, BALL_ROT_Y_STEP_DEG,
+    CONTROLLER_HOLD_REPEAT_DELAY_SECS, CONTROLLER_HOLD_REPEAT_INTERVAL_SECS,
+};
 use eframe::egui::{self, Color32};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc as tokio_mpsc;
@@ -24,12 +28,23 @@ struct ControllerApp {
     force: f32,
     direction_x: f32,
     direction_z: f32,
+    zoomed_in: bool,
+    setup_action: Option<SetupAction>,
+    setup_next_repeat_at: Option<Instant>,
     connected: bool,
     joined: bool,
     status: String,
     lobby_players: Vec<PlayerInfo>,
     scoreboard: Option<ScoreboardState>,
     log: VecDeque<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SetupAction {
+    MoveLeft,
+    MoveRight,
+    RotateLeft,
+    RotateRight,
 }
 
 impl ControllerApp {
@@ -54,6 +69,9 @@ impl ControllerApp {
             force: 0.5,
             direction_x: 0.0,
             direction_z: 1.0,
+            zoomed_in: false,
+            setup_action: None,
+            setup_next_repeat_at: None,
             connected: false,
             joined: false,
             status: "idle".to_string(),
@@ -83,6 +101,7 @@ impl ControllerApp {
     }
 
     fn disconnect(&mut self) {
+        self.stop_setup_hold();
         self.send_command(NetCommand::Disconnect);
     }
 
@@ -99,6 +118,7 @@ impl ControllerApp {
     }
 
     fn leave_lobby(&mut self) {
+        self.stop_setup_hold();
         self.send_command(NetCommand::Send(ClientMessage::Leave));
         self.joined = false;
         self.lobby_players.clear();
@@ -106,6 +126,12 @@ impl ControllerApp {
     }
 
     fn send_throw(&mut self) {
+        if self.zoomed_in {
+            self.push_log("throw blocked while zoomed".to_string());
+            return;
+        }
+
+        self.stop_setup_hold();
         self.send_command(NetCommand::Send(ClientMessage::ThrowEvent {
             force: self.force,
             direction_x: self.direction_x,
@@ -115,6 +141,83 @@ impl ControllerApp {
             "sent throw: force={:.2}, x={:.2}, z={:.2}",
             self.force, self.direction_x, self.direction_z
         ));
+    }
+
+    fn toggle_zoom(&mut self) {
+        if !(self.connected && self.joined) {
+            return;
+        }
+
+        self.zoomed_in = !self.zoomed_in;
+        self.stop_setup_hold();
+        self.send_command(NetCommand::Send(ClientMessage::ToggleZoom {
+            zoomed_in: self.zoomed_in,
+        }));
+        self.push_log(format!("zoom toggled: {}", self.zoomed_in));
+    }
+
+    fn send_setup_adjust(&mut self, move_z_delta: f32, rotate_y_delta_deg: f32) {
+        self.send_command(NetCommand::Send(ClientMessage::AdjustBallSetup {
+            move_z_delta,
+            rotate_y_delta_deg,
+        }));
+        self.push_log(format!(
+            "setup adjust: move_z={:+.3}, rotate_y={:+.3}",
+            move_z_delta, rotate_y_delta_deg
+        ));
+    }
+
+    fn setup_adjustment(action: SetupAction) -> (f32, f32) {
+        match action {
+            SetupAction::MoveLeft => (-BALL_MOVE_Z_STEP, 0.0),
+            SetupAction::MoveRight => (BALL_MOVE_Z_STEP, 0.0),
+            SetupAction::RotateLeft => (0.0, BALL_ROT_Y_STEP_DEG),
+            SetupAction::RotateRight => (0.0, -BALL_ROT_Y_STEP_DEG),
+        }
+    }
+
+    fn start_setup_hold(&mut self, action: SetupAction) {
+        if !(self.connected && self.joined) {
+            return;
+        }
+
+        self.setup_action = Some(action);
+        self.setup_next_repeat_at = Some(Instant::now() + Duration::from_secs_f32(CONTROLLER_HOLD_REPEAT_DELAY_SECS));
+        let (move_z_delta, rotate_y_delta_deg) = Self::setup_adjustment(action);
+        self.send_setup_adjust(move_z_delta, rotate_y_delta_deg);
+    }
+
+    fn stop_setup_hold(&mut self) {
+        self.setup_action = None;
+        self.setup_next_repeat_at = None;
+    }
+
+    fn update_setup_hold(&mut self, ctx: &egui::Context) {
+        let Some(action) = self.setup_action else {
+            return;
+        };
+
+        if !self.connected || !self.joined {
+            self.stop_setup_hold();
+            return;
+        }
+
+        if !ctx.input(|i| i.pointer.primary_down()) {
+            self.stop_setup_hold();
+            return;
+        }
+
+        let now = Instant::now();
+        let Some(next_repeat_at) = self.setup_next_repeat_at else {
+            self.stop_setup_hold();
+            return;
+        };
+
+        if now >= next_repeat_at {
+            let (move_z_delta, rotate_y_delta_deg) = Self::setup_adjustment(action);
+            self.send_setup_adjust(move_z_delta, rotate_y_delta_deg);
+            self.setup_next_repeat_at = Some(now + Duration::from_secs_f32(CONTROLLER_HOLD_REPEAT_INTERVAL_SECS));
+        }
     }
 
     fn handle_event(&mut self, event: UiEvent) {
@@ -131,6 +234,8 @@ impl ControllerApp {
             UiEvent::Disconnected(reason) => {
                 self.connected = false;
                 self.joined = false;
+                self.zoomed_in = false;
+                self.stop_setup_hold();
                 self.lobby_players.clear();
                 self.scoreboard = None;
                 self.status = format!("disconnected: {reason}");
@@ -204,6 +309,19 @@ impl ControllerApp {
                     "throw relayed for {player_id}: force={force:.2}, x={direction_x:.2}, z={direction_z:.2}"
                 ));
             }
+            ServerMessage::AdjustBallSetup {
+                player_id,
+                move_z_delta,
+                rotate_y_delta_deg,
+            } => {
+                self.push_log(format!(
+                    "setup relayed for {player_id}: move_z={move_z_delta:+.3}, rotate_y={rotate_y_delta_deg:+.3}"
+                ));
+            }
+            ServerMessage::ToggleZoom { player_id, zoomed_in } => {
+                self.zoomed_in = zoomed_in;
+                self.push_log(format!("zoom relayed for {player_id}: {zoomed_in}"));
+            }
             ServerMessage::Info { message } => {
                 self.status = message.clone();
                 self.push_log(message);
@@ -221,6 +339,8 @@ impl eframe::App for ControllerApp {
         while let Ok(event) = self.event_rx.try_recv() {
             self.handle_event(event);
         }
+
+        self.update_setup_hold(ctx);
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -279,9 +399,51 @@ impl eframe::App for ControllerApp {
                     );
                     ui.add(egui::Slider::new(&mut self.direction_z, 0.0..=1.0).text("Direction Z"));
 
-                    if ui.button("Send throw").clicked() {
+                    if ui
+                        .add_enabled(!self.zoomed_in, egui::Button::new("Send throw"))
+                        .clicked()
+                    {
                         self.send_throw();
                     }
+
+                    if ui
+                        .button(if self.zoomed_in { "Zoom off" } else { "Zoom" })
+                        .clicked()
+                    {
+                        self.toggle_zoom();
+                    }
+
+                    ui.separator();
+                    ui.label(format!(
+                        "Move Z range: {:.2}..{:.2}",
+                        BALL_MOVE_Z_MIN, BALL_MOVE_Z_MAX
+                    ));
+                    ui.label(format!(
+                        "Rotate Y range: ±{:.0}°",
+                        BALL_ROT_Y_MAX_DEG
+                    ));
+
+                    ui.horizontal(|ui| {
+                        let left = ui.add(egui::Button::new("Move left"));
+                        if left.is_pointer_button_down_on() && self.setup_action != Some(SetupAction::MoveLeft) {
+                            self.start_setup_hold(SetupAction::MoveLeft);
+                        }
+                        let right = ui.add(egui::Button::new("Move right"));
+                        if right.is_pointer_button_down_on() && self.setup_action != Some(SetupAction::MoveRight) {
+                            self.start_setup_hold(SetupAction::MoveRight);
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        let left = ui.add(egui::Button::new("Rotate left"));
+                        if left.is_pointer_button_down_on() && self.setup_action != Some(SetupAction::RotateLeft) {
+                            self.start_setup_hold(SetupAction::RotateLeft);
+                        }
+                        let right = ui.add(egui::Button::new("Rotate right"));
+                        if right.is_pointer_button_down_on() && self.setup_action != Some(SetupAction::RotateRight) {
+                            self.start_setup_hold(SetupAction::RotateRight);
+                        }
+                    });
                 });
 
                 ui.separator();
