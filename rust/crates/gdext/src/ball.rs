@@ -15,9 +15,6 @@ pub struct Ball {
     track_end: NodePath,
 
     #[export]
-    speed: f32,
-
-    #[export]
     reset_when_past_end: bool,
 
     launched: bool,
@@ -30,14 +27,13 @@ impl IRigidBody3D for Ball {
             base,
             track_start: NodePath::default(),
             track_end: NodePath::default(),
-            speed: 5.0,
             reset_when_past_end: true,
             launched: false,
         }
     }
 
     fn ready(&mut self) {
-        self.reset_ball();
+        self.base_mut().set_freeze_enabled(true);
     }
 
     fn physics_process(&mut self, _delta: f64) {
@@ -49,12 +45,32 @@ impl IRigidBody3D for Ball {
             return;
         };
 
-        let ball_x = self.base().get_global_position().x;
-        let end_x = end.get_global_position().x;
+        let reset_when_past_end = self.reset_when_past_end;
 
-        if self.reset_when_past_end && ball_x > end_x {
+        let should_reset = {
+            let mut rb = self.base_mut();
+            let mut velocity = rb.get_linear_velocity();
+            let position = rb.get_global_position();
+
+            // Let the release spin gradually bend the ball once it is back down near the lane.
+            if position.y <= 0.25 && velocity.y <= 0.0 && velocity.x > 0.1 {
+                let spin = rb.get_angular_velocity().y;
+                let hook = velocity.x * spin * 0.01;
+                velocity.z = (velocity.z + hook).clamp(-8.0, 8.0);
+                rb.set_linear_velocity(velocity);
+            }
+
+            let ball_x = position.x;
+            let end_x = end.get_global_position().x;
+            let horizontal_speed = Vector2::new(velocity.x, velocity.z).length();
+
+            (reset_when_past_end && ball_x > end_x)
+                || (ball_x < end_x && horizontal_speed < 0.05)
+        };
+
+        if should_reset {
             self.launched = false;
-            self.reset_ball();
+            self.base_mut().queue_free();
         }
     }
 }
@@ -82,17 +98,16 @@ impl Ball {
         self.launched = true;
 
         let force = force.clamp(0.0, 1.0);
-        let direction = Vector2::new(direction_x, direction_z).normalized();
-
-        let forward = direction.y.max(0.35);
-        let lateral = direction.x.clamp(-0.85, 0.85);
-        let speed = 1.5 + self.speed * force;
+        let speed = 4.1666665 + (8.333333 - 4.1666665) * force;
+        let lift = direction_z.clamp(-1.0, 1.0) * 4.0;
+        let spin = direction_x.clamp(-1.0, 1.0);
 
         let mut rb = self.base_mut();
 
-        rb.set_linear_velocity(Vector3::new(speed * forward, 0.0, speed * lateral * 0.35));
+        rb.set_freeze_enabled(false);
+        rb.set_linear_velocity(Vector3::new(speed, lift, 0.0));
 
-        rb.set_angular_velocity(Vector3::new(0.0, speed * lateral * 0.6, -speed));
+        rb.set_angular_velocity(Vector3::new(0.0, speed * spin * 0.1, -speed));
 
         rb.set_sleeping(false);
     }
@@ -105,12 +120,12 @@ impl Ball {
             return;
         };
 
-        let pos = start.get_global_position();
         let mut rb = self.base_mut();
 
-        rb.set_global_position(pos);
+        rb.set_global_transform(start.get_global_transform());
         rb.set_linear_velocity(Vector3::ZERO);
         rb.set_angular_velocity(Vector3::ZERO);
+        rb.set_freeze_enabled(true);
         rb.set_sleeping(false);
     }
 

@@ -1,5 +1,7 @@
 [gd_scene format=4 uid="uid://c4lxwj7yridtd"]
 
+[ext_resource type="PackedScene" uid="uid://1ucftiis2ob1" path="res://Assets/BowlingBallReal.blend" id="1_ojniv"]
+
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_l240j"]
 friction = 0.2
 bounce = 0.05
@@ -53,8 +55,12 @@ physics_material_override = SubResource("PhysicsMaterial_l240j")
 linear_damp = 0.05
 angular_damp = 0.1
 
+[node name="BowlingBallReal" parent="." unique_id=572944494 instance=ExtResource("1_ojniv")]
+transform = Transform3D(0.985, 0, 0, 0, 0.985, 0, 0, 0, 0.985, 0, 0, 0)
+
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1957846525]
 shape = SubResource("SphereShape3D_ojniv")
 
 [node name="Sphere2" type="MeshInstance3D" parent="." unique_id=990615411]
+visible = false
 mesh = SubResource("ArrayMesh_gslnb")

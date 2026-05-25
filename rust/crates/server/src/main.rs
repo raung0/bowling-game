@@ -895,9 +895,11 @@ async fn relay_throw_event(
         return Err("throw direction must be finite".into());
     }
     let direction_len = (direction_x * direction_x + direction_z * direction_z).sqrt();
-    if !(0.5..=1.5).contains(&direction_len) {
-        return Err("throw direction must be normalized".into());
-    }
+    let _normalized_direction = if direction_len > 0.0 {
+        (direction_x / direction_len, direction_z / direction_len)
+    } else {
+        (0.0, 1.0)
+    };
     lobby.ball_in_play = true;
     Ok(player_id)
 }

@@ -50,6 +50,7 @@ script = ExtResource("3_sb48q")
 metadata/_custom_type_script = "uid://bd046eokvcnu2"
 
 [node name="BallStartPoint" type="Node3D" parent="." unique_id=1695478958]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 1, 0)
 
 [node name="BallEndPoint" type="Node3D" parent="." unique_id=1237491589]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.4, 0, -0.057)
@@ -57,4 +58,5 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.4, 0, -0.057)
 [node name="BowlingBall" parent="." unique_id=1800342674 instance=ExtResource("4_sb48q")]
 track_start = NodePath("../BallStartPoint")
 track_end = NodePath("../BallEndPoint")
+reset_when_past_end = null
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.19298536, 0)

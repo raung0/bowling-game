@@ -2,7 +2,7 @@ use common::{ClientMessage, PlayerInfo, ScoreboardState, ServerMessage};
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{Button, LineEdit, Node, WebSocketPeer},
+    classes::{Button, LineEdit, Node, PackedScene, WebSocketPeer},
     global::Error,
     prelude::*,
 };
@@ -65,6 +65,7 @@ pub struct GameState {
     host_throw_start_fallen: i32,
     host_throw_waiting_report: bool,
     host_throw_settle_secs: f64,
+    pending_ball_respawn: bool,
     leave_holding: bool,
     leave_hold_secs: f64,
 
@@ -101,6 +102,7 @@ impl INode for GameState {
             host_throw_start_fallen: 0,
             host_throw_waiting_report: false,
             host_throw_settle_secs: 0.0,
+            pending_ball_respawn: false,
             leave_holding: false,
             leave_hold_secs: 0.0,
         }
@@ -108,6 +110,7 @@ impl INode for GameState {
 
     fn ready(&mut self) {
         self.base_mut().set_process(true);
+        self.pending_ball_respawn = true;
 
         let mut join_button = self
             .base()
@@ -173,6 +176,7 @@ impl INode for GameState {
         self.accel = self.browser_accel();
         self.is_mobile = self.is_mobile_web();
 
+        self.process_pending_ball_respawn();
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
         self.update_controller_strength();
@@ -277,6 +281,43 @@ impl GameState {
             .and_then(|node| node.try_cast::<Ball>().ok())
     }
 
+    fn request_ball_respawn(&mut self) {
+        if let Some(mut ball) = self.try_ball() {
+            ball.queue_free();
+        }
+        self.pending_ball_respawn = true;
+    }
+
+    fn process_pending_ball_respawn(&mut self) {
+        if !self.pending_ball_respawn || self.try_ball().is_some() {
+            return;
+        }
+
+        let Some(mut game_root) = self.base().get_node_or_null("GameManager") else {
+            return;
+        };
+
+        let ball_scene = load::<PackedScene>("res://Assets/bowling_ball.tscn");
+        let mut ball = ball_scene.instantiate_as::<Ball>();
+
+        ball.set(
+            "track_start",
+            &NodePath::from("../BallStartPoint").to_variant(),
+        );
+        ball.set("track_end", &NodePath::from("../BallEndPoint").to_variant());
+        ball.set("name", &StringName::from("BowlingBall").to_variant());
+
+        game_root.add_child(&ball);
+        ball.bind_mut().reset_ball();
+
+        if let Some(mut phantom_camera) = game_root.get_node_or_null("PhantomCamera3D") {
+            phantom_camera.set("follow_target", &ball.to_variant());
+            phantom_camera.set("look_at_target", &ball.to_variant());
+        }
+
+        self.pending_ball_respawn = false;
+    }
+
     fn try_game_manager(&self) -> Option<Gd<GameManager>> {
         self.base()
             .get_node_or_null("GameManager")
@@ -287,9 +328,7 @@ impl GameState {
         if let Some(mut game_manager) = self.try_game_manager() {
             game_manager.bind_mut().spawn_pins();
         }
-        if let Some(mut ball) = self.try_ball() {
-            ball.bind_mut().reset_ball();
-        }
+        self.request_ball_respawn();
         self.host_ball_was_launched = false;
         self.host_throw_start_fallen = 0;
         self.host_throw_waiting_report = false;
@@ -318,8 +357,10 @@ impl GameState {
             return;
         }
 
-        let Some(ball) = self.try_ball() else { return };
-        let launched = ball.bind().is_launched();
+        let launched = self
+            .try_ball()
+            .map(|ball| ball.bind().is_launched())
+            .unwrap_or(false);
 
         if launched {
             self.host_ball_was_launched = true;
@@ -391,9 +432,7 @@ impl GameState {
                 game_manager.bind_mut().clear_fallen_pins();
             }
 
-            if let Some(mut ball) = self.try_ball() {
-                ball.bind_mut().reset_ball();
-            }
+            self.request_ball_respawn();
 
             self.host_throw_start_fallen = 0;
         } else {
@@ -645,6 +684,7 @@ impl GameState {
             } => {
                 self.lobby_code = code;
                 self.current_player_id = current_player_id;
+                self.reset_lane_for_turn();
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::TurnChanged { current_player_id } => {

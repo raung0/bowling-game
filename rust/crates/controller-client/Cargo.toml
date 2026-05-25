@@ -1,0 +1,12 @@
+[package]
+name = "controller-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+eframe = "0.29"
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tokio-tungstenite = "0.24"
+url = "2"
