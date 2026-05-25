@@ -1,5 +1,7 @@
 [gd_scene format=3 uid="uid://dy3wsajldrccu"]
 
+[ext_resource type="Theme" uid="uid://d2u5pcqha73ql" path="res://Assets/themes/main_theme.tres" id="1_b3bc3"]
+
 [sub_resource type="LabelSettings" id="LabelSettings_wusub"]
 font_size = 43
 
@@ -11,6 +13,7 @@ grow_horizontal = 2
 grow_vertical = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+theme = ExtResource("1_b3bc3")
 
 [node name="CenterContainer" type="CenterContainer" parent="." unique_id=1440770247]
 layout_mode = 1
@@ -327,6 +330,10 @@ text = "Rotate right"
 layout_mode = 2
 theme_override_font_sizes/font_size = 53
 text = "Zoom"
+
+[node name="Container" type="PanelContainer" parent="Controller/MarginContainer/VBoxContainer" unique_id=2018131203]
+layout_mode = 2
+size_flags_vertical = 3
 
 [node name="BackToMenu" type="Button" parent="Controller/MarginContainer/VBoxContainer" unique_id=1608917289]
 custom_minimum_size = Vector2(0, 84)
