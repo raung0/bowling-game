@@ -323,6 +323,11 @@ size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 32
 text = "Rotate right"
 
+[node name="Zoom" type="Button" parent="Controller/MarginContainer/VBoxContainer" unique_id=692716277]
+layout_mode = 2
+theme_override_font_sizes/font_size = 53
+text = "Zoom"
+
 [node name="BackToMenu" type="Button" parent="Controller/MarginContainer/VBoxContainer" unique_id=1608917289]
 custom_minimum_size = Vector2(0, 84)
 layout_mode = 2
