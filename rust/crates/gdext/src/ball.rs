@@ -38,6 +38,14 @@ impl IRigidBody3D for Ball {
 
     fn physics_process(&mut self, _delta: f64) {
         if !self.launched {
+            if let Some(start) = self.track_start_node() {
+                let mut rb = self.base_mut();
+                rb.set_global_transform(start.get_global_transform());
+                rb.set_linear_velocity(Vector3::ZERO);
+                rb.set_angular_velocity(Vector3::ZERO);
+                rb.set_freeze_enabled(true);
+            }
+
             return;
         }
 

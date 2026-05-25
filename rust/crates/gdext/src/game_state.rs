@@ -2,7 +2,7 @@ use common::{ClientMessage, PlayerInfo, ScoreboardState, ServerMessage};
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{Button, LineEdit, Node, PackedScene, WebSocketPeer},
+    classes::{Button, LineEdit, Node, Node3D, PackedScene, WebSocketPeer},
     global::Error,
     prelude::*,
 };
@@ -66,6 +66,7 @@ pub struct GameState {
     host_throw_waiting_report: bool,
     host_throw_settle_secs: f64,
     pending_ball_respawn: bool,
+    ball_start_initial_transform: Option<Transform3D>,
     leave_holding: bool,
     leave_hold_secs: f64,
 
@@ -103,6 +104,7 @@ impl INode for GameState {
             host_throw_waiting_report: false,
             host_throw_settle_secs: 0.0,
             pending_ball_respawn: false,
+            ball_start_initial_transform: None,
             leave_holding: false,
             leave_hold_secs: 0.0,
         }
@@ -110,6 +112,7 @@ impl INode for GameState {
 
     fn ready(&mut self) {
         self.base_mut().set_process(true);
+        self.capture_ball_start_initial_transform();
         self.pending_ball_respawn = true;
 
         let mut join_button = self
@@ -281,6 +284,36 @@ impl GameState {
             .and_then(|node| node.try_cast::<Ball>().ok())
     }
 
+    fn try_ball_start_point(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/BallStartPoint")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn capture_ball_start_initial_transform(&mut self) {
+        if self.ball_start_initial_transform.is_some() {
+            return;
+        }
+
+        let Some(start) = self.try_ball_start_point() else {
+            return;
+        };
+
+        self.ball_start_initial_transform = Some(start.get_global_transform());
+    }
+
+    fn restore_ball_start_point_transform(&self) {
+        let Some(initial_transform) = self.ball_start_initial_transform else {
+            return;
+        };
+
+        let Some(mut start) = self.try_ball_start_point() else {
+            return;
+        };
+
+        start.set_global_transform(initial_transform);
+    }
+
     fn request_ball_respawn(&mut self) {
         if let Some(mut ball) = self.try_ball() {
             ball.queue_free();
@@ -296,6 +329,8 @@ impl GameState {
         let Some(mut game_root) = self.base().get_node_or_null("GameManager") else {
             return;
         };
+
+        self.restore_ball_start_point_transform();
 
         let ball_scene = load::<PackedScene>("res://Assets/bowling_ball.tscn");
         let mut ball = ball_scene.instantiate_as::<Ball>();
@@ -328,6 +363,7 @@ impl GameState {
         if let Some(mut game_manager) = self.try_game_manager() {
             game_manager.bind_mut().spawn_pins();
         }
+        self.restore_ball_start_point_transform();
         self.request_ball_respawn();
         self.host_ball_was_launched = false;
         self.host_throw_start_fallen = 0;
@@ -684,6 +720,7 @@ impl GameState {
             } => {
                 self.lobby_code = code;
                 self.current_player_id = current_player_id;
+                self.restore_ball_start_point_transform();
                 self.reset_lane_for_turn();
                 self.screen = self.gameplay_screen();
             }
@@ -710,8 +747,10 @@ impl GameState {
                 if self.is_host()
                     && let Some(mut ball) = self.try_ball()
                 {
+                    ball.bind_mut().reset_ball();
                     ball.bind_mut()
                         .launch_throw(force, direction_x, direction_z);
+                    self.restore_ball_start_point_transform();
                     self.host_ball_was_launched = true;
                 }
             }
