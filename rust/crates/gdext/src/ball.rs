@@ -101,11 +101,22 @@ impl Ball {
         let speed = 4.1666665 + (8.333333 - 4.1666665) * force;
         let lift = direction_z.clamp(-1.0, 1.0) * 4.0;
         let spin = direction_x.clamp(-1.0, 1.0);
+        let aim_direction = self
+            .track_start_node()
+            .map(|start| {
+                let forward = start.get_global_transform().basis * Vector3::RIGHT;
+                if forward.length_squared() > 0.0 {
+                    Vector3::new(forward.x, 0.0, forward.z).normalized()
+                } else {
+                    Vector3::RIGHT
+                }
+            })
+            .unwrap_or(Vector3::RIGHT);
 
         let mut rb = self.base_mut();
 
         rb.set_freeze_enabled(false);
-        rb.set_linear_velocity(Vector3::new(speed, lift, 0.0));
+        rb.set_linear_velocity(aim_direction * speed + Vector3::UP * lift);
 
         rb.set_angular_velocity(Vector3::new(0.0, speed * spin * 0.1, -speed));
 
