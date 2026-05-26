@@ -1566,6 +1566,20 @@ impl GameState {
         });
     }
 
+    fn maybe_skip_replay_on_aim_input(&mut self) -> bool {
+        if !self.is_local_player_turn() {
+            return false;
+        }
+
+        if matches!(self.game_phase, GamePhase::PlayReplay { .. }) {
+            self.stop_ball_setup_hold();
+            self.finish_replay();
+            return true;
+        }
+
+        false
+    }
+
     fn stop_ball_setup_hold(&mut self) {
         self.ball_setup_action = None;
         self.ball_setup_hold_secs = 0.0;
@@ -2544,11 +2558,17 @@ impl GameState {
 
     #[func]
     fn on_move_left_button_down(&mut self) {
+        if self.maybe_skip_replay_on_aim_input() {
+            return;
+        }
         self.start_ball_setup_hold(BallSetupAction::MoveLeft);
     }
 
     #[func]
     fn on_move_right_button_down(&mut self) {
+        if self.maybe_skip_replay_on_aim_input() {
+            return;
+        }
         self.start_ball_setup_hold(BallSetupAction::MoveRight);
     }
 
@@ -2559,11 +2579,17 @@ impl GameState {
 
     #[func]
     fn on_rotate_left_button_down(&mut self) {
+        if self.maybe_skip_replay_on_aim_input() {
+            return;
+        }
         self.start_ball_setup_hold(BallSetupAction::RotateLeft);
     }
 
     #[func]
     fn on_rotate_right_button_down(&mut self) {
+        if self.maybe_skip_replay_on_aim_input() {
+            return;
+        }
         self.start_ball_setup_hold(BallSetupAction::RotateRight);
     }
 
