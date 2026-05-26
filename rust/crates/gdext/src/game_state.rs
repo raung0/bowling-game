@@ -83,7 +83,7 @@ enum GamePhase {
         announcement: String,
         camera_index: usize,
         frame_index: usize,
-        frame_hold: bool,
+        frame_t: f32,
     },
 }
 
@@ -130,7 +130,7 @@ pub struct GameState {
     direction_indicator: Option<Gd<Node3D>>,
     direction_indicator_fade_progress: f64,
     zoomed_in_camera_aim_offset: Option<Transform3D>,
-    camera_target_initial_y: Option<f32>,
+    camera_target_fix_yz: Option<Vector2>,
     music_playlist: Vec<Gd<AudioStream>>,
     music_order: Vec<usize>,
     music_order_index: usize,
@@ -186,7 +186,7 @@ impl INode for GameState {
             direction_indicator: None,
             direction_indicator_fade_progress: 0.0,
             zoomed_in_camera_aim_offset: None,
-            camera_target_initial_y: None,
+            camera_target_fix_yz: None,
             music_playlist: Vec::new(),
             music_order: Vec::new(),
             music_order_index: 0,
@@ -216,7 +216,6 @@ impl INode for GameState {
         self.set_zoomed_in(false);
         self.pending_ball_respawn = true;
         self.capture_zoomed_in_camera_aim_offset();
-        self.capture_camera_target_initial_y();
 
         if let Some(mut replay_audio) = self.try_replay_audio_player() {
             replay_audio.connect(
@@ -422,9 +421,9 @@ impl INode for GameState {
         rendering::render_info_text(self, &info_text);
     }
 
-    fn physics_process(&mut self, _delta: f64) {
+    fn physics_process(&mut self, delta: f64) {
         self.update_replay_recording();
-        self.update_replay_playback();
+        self.update_replay_playback(delta);
     }
 }
 
@@ -622,29 +621,19 @@ impl GameState {
             .and_then(|node| node.try_cast::<Node3D>().ok())
     }
 
-    fn capture_camera_target_initial_y(&mut self) {
-        if self.camera_target_initial_y.is_some() {
-            return;
-        }
-
-        let Some(camera_target) = self.try_camera_target() else {
-            return;
-        };
-
-        self.camera_target_initial_y = Some(camera_target.get_global_position().y);
-    }
-
     fn sync_camera_target_to_ball_with_clamp(&mut self) {
         let Some(ball) = self.try_ball() else {
+            self.camera_target_fix_yz = None;
             return;
         };
-        let Some(marker) = self
-            .try_camera_track_stop()
-            .or_else(|| self.try_replay_start_marker())
-        else {
+        let stop_marker = self.try_camera_track_stop();
+        let fix_start = self.try_camera_fix_start();
+        let Some(marker) = stop_marker.clone().or_else(|| self.try_replay_start_marker()) else {
+            self.camera_target_fix_yz = None;
             return;
         };
         let Some(mut camera_target) = self.try_camera_target() else {
+            self.camera_target_fix_yz = None;
             return;
         };
 
@@ -653,10 +642,27 @@ impl GameState {
 
         let mut target_transform = ball_transform;
         target_transform.origin.x = ball_transform.origin.x.min(marker_x);
-        target_transform.origin.y = self
-            .camera_target_initial_y
-            .unwrap_or(target_transform.origin.y);
-        target_transform.origin.z = 0.0;
+        if let Some(fix_start) = fix_start {
+            let fix_start_position = fix_start.get_global_position();
+            if ball_transform.origin.x >= fix_start_position.x {
+                if self.camera_target_fix_yz.is_none() {
+                    let current_target_pos = camera_target.get_global_position();
+                    self.camera_target_fix_yz = Some(Vector2::new(
+                        current_target_pos.y,
+                        current_target_pos.z,
+                    ));
+                }
+
+                if let Some(fixed_yz) = self.camera_target_fix_yz {
+                    target_transform.origin.y = fixed_yz.x;
+                    target_transform.origin.z = fixed_yz.y;
+                }
+            } else {
+                self.camera_target_fix_yz = None;
+            }
+        } else {
+            self.camera_target_fix_yz = None;
+        }
         camera_target.set_global_transform(target_transform);
     }
 
@@ -1014,6 +1020,12 @@ impl GameState {
             .and_then(|node| node.try_cast::<Node3D>().ok())
     }
 
+    fn try_camera_fix_start(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/CameraFixStart")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
     fn try_replay_audio_player(&self) -> Option<Gd<AudioStreamPlayer>> {
         self.try_replay_node("ReplayAudioPlayer")
             .and_then(|node| node.try_cast::<AudioStreamPlayer>().ok())
@@ -1182,13 +1194,26 @@ impl GameState {
         }
     }
 
-    fn update_replay_ghosts(&mut self, sample: &ReplayFrame) {
+    fn interpolate_transform(a: Transform3D, b: Transform3D, t: f32) -> Transform3D {
+        let mut out = a;
+        out.origin = a.origin.lerp(b.origin, t);
+        out.basis = a.basis.slerp(&b.basis, t);
+        out
+    }
+
+    fn update_replay_ghosts_interpolated(&mut self, from: &ReplayFrame, to: &ReplayFrame, t: f32) {
+        let clamped_t = t.clamp(0.0, 1.0);
+
         if let Some(ball_ghost) = self.replay_ball_ghost.as_mut() {
-            ball_ghost.set_global_transform(sample.ball);
+            ball_ghost.set_global_transform(Self::interpolate_transform(from.ball, to.ball, clamped_t));
         }
 
-        for (ghost, pin_transform) in self.replay_pin_ghosts.iter_mut().zip(sample.pins.iter()) {
-            ghost.set_global_transform(*pin_transform);
+        for (ghost, (from_pin, to_pin)) in self
+            .replay_pin_ghosts
+            .iter_mut()
+            .zip(from.pins.iter().zip(to.pins.iter()))
+        {
+            ghost.set_global_transform(Self::interpolate_transform(*from_pin, *to_pin, clamped_t));
         }
     }
 
@@ -1375,22 +1400,22 @@ impl GameState {
             announcement,
             camera_index: 0,
             frame_index: 0,
-            frame_hold: false,
+            frame_t: 0.0,
         };
     }
 
-    fn update_replay_playback(&mut self) {
-        let (announcement, camera_index, frame_index, frame_hold) = match &self.game_phase {
+    fn update_replay_playback(&mut self, delta: f64) {
+        let (announcement, camera_index, frame_index, frame_t) = match &self.game_phase {
             GamePhase::PlayReplay {
                 announcement,
                 camera_index,
                 frame_index,
-                frame_hold,
+                frame_t,
             } => (
                 announcement.clone(),
                 *camera_index,
                 *frame_index,
-                *frame_hold,
+                *frame_t,
             ),
             _ => return,
         };
@@ -1415,25 +1440,12 @@ impl GameState {
                 announcement,
                 camera_index: next_camera,
                 frame_index: 0,
-                frame_hold: false,
+                frame_t: 0.0,
             };
             return;
         }
 
-        let sample = self.replay_samples[frame_index].clone();
-
-        self.update_replay_ghosts(&sample);
-
-        let (next_frame_index, next_frame_hold) = if camera_half_speed {
-            if frame_hold {
-                (frame_index + 1, false)
-            } else {
-                (frame_index, true)
-            }
-        } else {
-            (frame_index + 1, false)
-        };
-
+        let next_frame_index = frame_index + 1;
         if next_frame_index >= self.replay_samples.len() {
             let next_camera = camera_index + 1;
             if next_camera >= self.replay_cameras.len() {
@@ -1447,16 +1459,29 @@ impl GameState {
                 announcement,
                 camera_index: next_camera,
                 frame_index: 0,
-                frame_hold: false,
+                frame_t: 0.0,
             };
             return;
         }
 
+        let from = self.replay_samples[frame_index].clone();
+        let to = self.replay_samples[next_frame_index].clone();
+        self.update_replay_ghosts_interpolated(&from, &to, frame_t);
+
+        let playback_speed = if camera_half_speed { 0.5 } else { 1.0 };
+        let next_frame_t = frame_t + (delta as f32 * 60.0 * playback_speed as f32);
+
+        let (out_frame_index, out_frame_t) = if next_frame_t >= 1.0 {
+            (next_frame_index, next_frame_t - 1.0)
+        } else {
+            (frame_index, next_frame_t)
+        };
+
         self.game_phase = GamePhase::PlayReplay {
             announcement,
             camera_index,
-            frame_index: next_frame_index,
-            frame_hold: next_frame_hold,
+            frame_index: out_frame_index,
+            frame_t: out_frame_t,
         };
     }
 
@@ -2330,6 +2355,14 @@ impl GameState {
     #[func]
     fn on_leave_button_down(&mut self) {
         self.stop_ball_setup_hold();
+
+        if !self.is_mobile {
+            self.leave_holding = false;
+            self.leave_hold_secs = 0.0;
+            self.leave_game();
+            return;
+        }
+
         self.leave_holding = true;
         self.leave_hold_secs = 0.0;
         self.info_text = "Hold for 5 seconds to leave...".to_string();
