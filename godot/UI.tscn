@@ -1,9 +1,7 @@
 [gd_scene format=3 uid="uid://dy3wsajldrccu"]
 
 [ext_resource type="Theme" uid="uid://dtmv8ivrpnjdp" path="res://addons/scifi_theme/scifi.tres" id="1_b3bc3"]
-
-[sub_resource type="LabelSettings" id="LabelSettings_wusub"]
-font_size = 43
+[ext_resource type="Texture2D" uid="uid://bluaktmbqggnb" path="res://Assets/galaxy_hdri.png" id="2_bgtex"]
 
 [node name="UiManager" type="UiManager" unique_id=2042015992]
 anchors_preset = 15
@@ -14,6 +12,18 @@ grow_vertical = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme = ExtResource("1_b3bc3")
+
+[node name="Background" type="TextureRect" parent="." unique_id=1810204137]
+modulate = Color(0.6, 0.6, 0.6, 1)
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("2_bgtex")
+expand_mode = 1
+stretch_mode = 6
 
 [node name="CenterContainer" type="CenterContainer" parent="." unique_id=1440770247]
 layout_mode = 1
@@ -30,30 +40,41 @@ layout_mode = 2
 visible = false
 layout_mode = 2
 
-[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/Desktop" unique_id=853358637]
+[node name="PanelContainer" type="PanelContainer" parent="CenterContainer/VBoxContainer/Desktop" unique_id=1909010008]
+custom_minimum_size = Vector2(440, 270)
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CenterContainer/VBoxContainer/Desktop/PanelContainer" unique_id=351023355]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer" unique_id=853358637]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="Create" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=702747589]
+[node name="Create" type="Button" parent="CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer" unique_id=702747589]
 custom_minimum_size = Vector2(360, 52)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Create lobby"
 
-[node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=328286286]
+[node name="LobbyCode" type="LineEdit" parent="CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer" unique_id=328286286]
 custom_minimum_size = Vector2(360, 48)
 layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "Lobby Code"
 alignment = 1
 
-[node name="Spectate" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=1587907184]
+[node name="Spectate" type="Button" parent="CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer" unique_id=1587907184]
 custom_minimum_size = Vector2(360, 52)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Spectate Lobby"
 
-[node name="Settings" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=1865601724]
+[node name="Settings" type="Button" parent="CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer" unique_id=1865601724]
 custom_minimum_size = Vector2(360, 52)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -304,7 +325,7 @@ offset_bottom = 640.0
 grow_horizontal = 0
 
 [node name="MarginContainer" type="MarginContainer" parent="GameHud/ScoreboardPanel" unique_id=765470249]
-layout_mode = 0
+layout_mode = 2
 theme_override_constants/margin_left = 18
 theme_override_constants/margin_top = 18
 theme_override_constants/margin_right = 18
@@ -489,5 +510,4 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 28
 text = "Accel: x=0.00 y=0.00 z=0.00"
-label_settings = SubResource("LabelSettings_wusub")
 horizontal_alignment = 1

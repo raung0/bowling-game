@@ -20,6 +20,7 @@ impl IControl for UiManager {
 
 impl UiManager {
     pub fn set_screen(&mut self, s: Screen, is_mobile: bool) {
+        let mut background = self.base_mut().get_node_as::<Control>("Background");
         let mut mobile = self.base_mut().get_node_as::<Control>("Mobile");
         let mut desktop = self
             .base_mut()
@@ -30,6 +31,7 @@ impl UiManager {
         let mut info = self.base_mut().get_node_as::<Control>("Info");
         let mut controller = self.base_mut().get_node_as::<Control>("Controller");
         let mut game_hud = self.base_mut().get_node_as::<Control>("GameHud");
+        background.set_visible(!matches!(s, Screen::Game));
         match s {
             Screen::MainMenu => {
                 controller.set_visible(false);

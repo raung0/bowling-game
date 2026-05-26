@@ -237,10 +237,10 @@ impl INode for GameState {
             .base()
             .get_node_as::<Button>("UiManager/Mobile/VBoxContainer/Calibrate");
         let mut create_button = self.base().get_node_as::<Button>(
-            "UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Create",
+            "UiManager/CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer/Create",
         );
         let mut spectate_button = self.base().get_node_as::<Button>(
-            "UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Spectate",
+            "UiManager/CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer/Spectate",
         );
         let mut back_button = self.base().get_node_as::<Button>(
             "UiManager/CenterContainer/VBoxContainer/DesktopHost/PanelContainer/MarginContainer/VBoxContainer/Actions/Back",
@@ -289,7 +289,7 @@ impl INode for GameState {
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Zoom");
         let mut settings_button = self
             .base()
-            .get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Settings");
+            .get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer/Settings");
         let mut settings_close_button = self
             .base()
             .get_node_as::<Button>("UiManager/SettingsPanel/MarginContainer/VBoxContainer/Close");
@@ -494,6 +494,10 @@ impl GameState {
     }
 
     fn set_settings_panel_visible(&mut self, visible: bool) {
+        if let Some(mut center) = self.base().get_node_or_null("UiManager/CenterContainer") {
+            center.set("visible", &(!visible).to_variant());
+        }
+
         let Some(mut panel) = self.base().get_node_or_null("UiManager/SettingsPanel") else {
             return;
         };
@@ -2370,7 +2374,7 @@ impl GameState {
     fn on_spectate_pressed(&mut self) {
         let code = self
             .base()
-            .get_node_as::<LineEdit>("UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/LobbyCode")
+            .get_node_as::<LineEdit>("UiManager/CenterContainer/VBoxContainer/Desktop/PanelContainer/MarginContainer/VBoxContainer/LobbyCode")
             .get_text()
             .to_string()
             .trim()

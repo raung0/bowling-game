@@ -1,6 +1,6 @@
 use common::{PlayerInfo, PlayerScoreView, ScoreboardState};
 use godot::{
-    classes::{Button, HBoxContainer, Label, ProgressBar, VBoxContainer},
+    classes::{Button, HBoxContainer, Label, PanelContainer, ProgressBar, VBoxContainer},
     global::HorizontalAlignment,
     prelude::*,
 };
@@ -161,8 +161,11 @@ pub fn render_scoreboard(state: &mut GameState, scoreboard: &ScoreboardState) {
 }
 
 fn add_scorecard(root: &mut Gd<VBoxContainer>, player: &PlayerScoreView, featured: bool) {
+    let mut panel = PanelContainer::new_alloc();
+
     let mut wrapper = VBoxContainer::new_alloc();
     wrapper.add_theme_constant_override("separation", if featured { 8 } else { 6 });
+    panel.add_child(&wrapper);
 
     let mut header = HBoxContainer::new_alloc();
     let mut name = Label::new_alloc();
@@ -218,7 +221,7 @@ fn add_scorecard(root: &mut Gd<VBoxContainer>, player: &PlayerScoreView, feature
         frames.add_child(&frame_box);
     }
     wrapper.add_child(&frames);
-    root.add_child(&wrapper);
+    root.add_child(&panel);
 }
 
 fn clear_container<T>(container: &mut Gd<T>)
