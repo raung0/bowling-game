@@ -451,6 +451,13 @@ impl GameState {
         self.session_role.is_none()
     }
 
+    fn is_replay_active(&self) -> bool {
+        matches!(
+            self.game_phase,
+            GamePhase::AdvertiseResult { .. } | GamePhase::PlayReplay { .. }
+        )
+    }
+
     fn gameplay_screen(&self) -> Screen {
         if self.is_mobile && self.session_role == Some(SessionRole::Player) {
             Screen::Controller
@@ -1571,7 +1578,7 @@ impl GameState {
             return false;
         }
 
-        if matches!(self.game_phase, GamePhase::PlayReplay { .. }) {
+        if self.is_replay_active() {
             self.stop_ball_setup_hold();
             self.finish_replay();
             return true;
@@ -2490,6 +2497,9 @@ impl GameState {
         if self.zoomed_in {
             return;
         }
+        if self.is_replay_active() {
+            return;
+        }
         self.stop_ball_setup_hold();
         if !(self.calibration_active || self.is_local_player_turn()) {
             return;
@@ -2505,6 +2515,14 @@ impl GameState {
     #[func]
     fn on_hold_button_up(&mut self) {
         if !self.controller_holding {
+            return;
+        }
+        if self.is_replay_active() {
+            self.controller_holding = false;
+            self.controller_force = 0.0;
+            self.controller_direction = Vector2::new(0.0, 1.0);
+            self.controller_baseline_accel = Vector3::ZERO;
+            self.controller_motion_history.clear();
             return;
         }
 

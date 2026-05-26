@@ -162,39 +162,45 @@ pub fn render_scoreboard(state: &mut GameState, scoreboard: &ScoreboardState) {
 
 fn add_scorecard(root: &mut Gd<VBoxContainer>, player: &PlayerScoreView, featured: bool) {
     let mut panel = PanelContainer::new_alloc();
+    panel.set("size_flags_horizontal", &3.to_variant());
+    panel.set("clip_contents", &true.to_variant());
 
     let mut wrapper = VBoxContainer::new_alloc();
+    wrapper.set("size_flags_horizontal", &3.to_variant());
     wrapper.add_theme_constant_override("separation", if featured { 8 } else { 6 });
     panel.add_child(&wrapper);
 
     let mut header = HBoxContainer::new_alloc();
+    header.set("size_flags_horizontal", &3.to_variant());
     let mut name = Label::new_alloc();
     name.set_text(&GString::from(player.username.as_str()));
-    name.add_theme_font_size_override("font_size", if featured { 28 } else { 22 });
+    name.add_theme_font_size_override("font_size", if featured { 24 } else { 20 });
     header.add_child(&name);
 
     let mut status = Label::new_alloc();
     status.set_text(&GString::from(player.status_label.as_str()));
-    status.add_theme_font_size_override("font_size", if featured { 20 } else { 16 });
+    status.add_theme_font_size_override("font_size", if featured { 18 } else { 15 });
     header.add_child(&status);
 
     let mut total = Label::new_alloc();
     total.set_text(&GString::from(format!("{}", player.total_score).as_str()));
-    total.add_theme_font_size_override("font_size", if featured { 24 } else { 18 });
+    total.add_theme_font_size_override("font_size", if featured { 20 } else { 17 });
     header.add_child(&total);
     wrapper.add_child(&header);
 
     let mut frames = HBoxContainer::new_alloc();
+    frames.set("size_flags_horizontal", &3.to_variant());
     frames.add_theme_constant_override("separation", if featured { 6 } else { 4 });
     for (idx, frame) in player.frames.iter().enumerate() {
         let mut frame_box = VBoxContainer::new_alloc();
-        frame_box.set_custom_minimum_size(Vector2::new(if featured { 48.0 } else { 38.0 }, 0.0));
+        frame_box.set("size_flags_horizontal", &3.to_variant());
+        frame_box.set_custom_minimum_size(Vector2::new(if featured { 36.0 } else { 30.0 }, 0.0));
         frame_box.add_theme_constant_override("separation", 2);
 
         let mut frame_label = Label::new_alloc();
         frame_label.set_text(&GString::from(format!("{}", idx + 1).as_str()));
         frame_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
-        frame_label.add_theme_font_size_override("font_size", if featured { 14 } else { 12 });
+        frame_label.add_theme_font_size_override("font_size", if featured { 13 } else { 11 });
         frame_box.add_child(&frame_label);
 
         let mut rolls_label = Label::new_alloc();
@@ -205,7 +211,7 @@ fn add_scorecard(root: &mut Gd<VBoxContainer>, player: &PlayerScoreView, feature
         };
         rolls_label.set_text(&GString::from(rolls_text.as_str()));
         rolls_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
-        rolls_label.add_theme_font_size_override("font_size", if featured { 16 } else { 13 });
+        rolls_label.add_theme_font_size_override("font_size", if featured { 15 } else { 12 });
         frame_box.add_child(&rolls_label);
 
         let mut score_label = Label::new_alloc();
@@ -215,7 +221,7 @@ fn add_scorecard(root: &mut Gd<VBoxContainer>, player: &PlayerScoreView, feature
             .unwrap_or_default();
         score_label.set_text(&GString::from(score_text.as_str()));
         score_label.set_horizontal_alignment(HorizontalAlignment::CENTER);
-        score_label.add_theme_font_size_override("font_size", if featured { 16 } else { 13 });
+        score_label.add_theme_font_size_override("font_size", if featured { 15 } else { 12 });
         frame_box.add_child(&score_label);
 
         frames.add_child(&frame_box);
