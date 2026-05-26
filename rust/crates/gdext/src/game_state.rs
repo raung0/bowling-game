@@ -1867,7 +1867,7 @@ impl GameState {
                 }
             }
         }
-        "ws://127.0.0.1:3000/ws".to_string()
+        "ws://127.0.0.1:9000/ws".to_string()
     }
 
     fn ensure_socket(&mut self) {

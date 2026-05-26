@@ -63,7 +63,7 @@ impl ControllerApp {
         Self {
             command_tx,
             event_rx,
-            server_url: "ws://127.0.0.1:3000/ws".to_string(),
+            server_url: "ws://127.0.0.1:9000/ws".to_string(),
             lobby_code: String::new(),
             username: String::new(),
             force: 0.5,

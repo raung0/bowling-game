@@ -114,7 +114,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("starting server on http://0.0.0.0:3000");
+    info!("starting server on http://0.0.0.0:9000");
 
     let app_state: SharedState = Arc::new(Mutex::new(AppState::default()));
     tokio::spawn(cleanup_task(app_state.clone()));
@@ -124,7 +124,7 @@ async fn main() {
         .fallback(static_handler)
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
