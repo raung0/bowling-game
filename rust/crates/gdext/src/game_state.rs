@@ -130,6 +130,7 @@ pub struct GameState {
     direction_indicator: Option<Gd<Node3D>>,
     direction_indicator_fade_progress: f64,
     zoomed_in_camera_aim_offset: Option<Transform3D>,
+    camera_target_initial_y: Option<f32>,
     music_playlist: Vec<Gd<AudioStream>>,
     music_order: Vec<usize>,
     music_order_index: usize,
@@ -185,6 +186,7 @@ impl INode for GameState {
             direction_indicator: None,
             direction_indicator_fade_progress: 0.0,
             zoomed_in_camera_aim_offset: None,
+            camera_target_initial_y: None,
             music_playlist: Vec::new(),
             music_order: Vec::new(),
             music_order_index: 0,
@@ -214,6 +216,7 @@ impl INode for GameState {
         self.set_zoomed_in(false);
         self.pending_ball_respawn = true;
         self.capture_zoomed_in_camera_aim_offset();
+        self.capture_camera_target_initial_y();
 
         if let Some(mut replay_audio) = self.try_replay_audio_player() {
             replay_audio.connect(
@@ -619,11 +622,26 @@ impl GameState {
             .and_then(|node| node.try_cast::<Node3D>().ok())
     }
 
+    fn capture_camera_target_initial_y(&mut self) {
+        if self.camera_target_initial_y.is_some() {
+            return;
+        }
+
+        let Some(camera_target) = self.try_camera_target() else {
+            return;
+        };
+
+        self.camera_target_initial_y = Some(camera_target.get_global_position().y);
+    }
+
     fn sync_camera_target_to_ball_with_clamp(&mut self) {
         let Some(ball) = self.try_ball() else {
             return;
         };
-        let Some(marker) = self.try_replay_start_marker() else {
+        let Some(marker) = self
+            .try_camera_track_stop()
+            .or_else(|| self.try_replay_start_marker())
+        else {
             return;
         };
         let Some(mut camera_target) = self.try_camera_target() else {
@@ -635,6 +653,9 @@ impl GameState {
 
         let mut target_transform = ball_transform;
         target_transform.origin.x = ball_transform.origin.x.min(marker_x);
+        target_transform.origin.y = self
+            .camera_target_initial_y
+            .unwrap_or(target_transform.origin.y);
         target_transform.origin.z = 0.0;
         camera_target.set_global_transform(target_transform);
     }
@@ -952,6 +973,9 @@ impl GameState {
     fn retarget_live_cameras_to_ball(&self, ball: &Gd<Ball>) {
         let ball = ball.to_variant();
         for camera in self.collect_live_cameras() {
+            if camera.name == "PhantomCameraNormal" {
+                continue;
+            }
             let mut node = camera.node;
             node.set("follow_target", &ball);
             node.set("look_at_target", &ball);
@@ -981,6 +1005,12 @@ impl GameState {
 
     fn try_replay_start_marker(&self) -> Option<Gd<Node3D>> {
         self.try_replay_node("ReplayStartMarker")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn try_camera_track_stop(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/CameraTrackStop")
             .and_then(|node| node.try_cast::<Node3D>().ok())
     }
 
