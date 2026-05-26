@@ -59,7 +59,13 @@ struct Lobby {
     current_turn: Option<usize>,
     game_in_progress: bool,
     ball_in_play: bool,
+    replay_locked: bool,
     bowling: BowlingState,
+}
+
+enum ControllerAction {
+    Apply { player_id: String },
+    SkipReplay,
 }
 
 struct Player {
@@ -252,6 +258,7 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                         current_turn: None,
                         game_in_progress: false,
                         ball_in_play: false,
+                        replay_locked: false,
                         bowling: BowlingState::default(),
                     };
 
@@ -430,17 +437,10 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                 direction_z,
             } => {
                 if let Some(ConnectionRole::Player { code, session }) = role.clone() {
-                    match relay_throw_event(
-                        &state,
-                        &code,
-                        &session,
-                        force,
-                        direction_x,
-                        direction_z,
-                    )
-                    .await
+                    match relay_throw_event(&state, &code, &session, force, direction_x, direction_z)
+                        .await
                     {
-                        Ok(player_id) => {
+                        Ok(ControllerAction::Apply { player_id }) => {
                             broadcast_lobby(
                                 &state,
                                 &code,
@@ -452,6 +452,9 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                                 },
                             )
                             .await;
+                        }
+                        Ok(ControllerAction::SkipReplay) => {
+                            broadcast_lobby(&state, &code, &ServerMessage::SkipReplay).await;
                         }
                         Err(message) => {
                             let _ = send_to_tx(&tx, &ServerMessage::Error { message });
@@ -471,57 +474,33 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                 rotate_y_delta_deg,
             } => {
                 if let Some(ConnectionRole::Player { code, session }) = role.clone() {
-                    let validation = {
-                        let mut s = state.lock().await;
-                        match s.player_sessions.get(&session) {
-                            None => Err("player session not found".to_string()),
-                            Some(sref) => {
-                                if sref.code != code {
-                                    Err("player is not in this lobby".to_string())
-                                } else {
-                                    let player_id = sref.player_id.clone();
-                                    match s.lobbies.get_mut(&code) {
-                                        None => Err("lobby not found".to_string()),
-                                        Some(lobby) => {
-                                            if !lobby.game_in_progress {
-                                                Err("game has not started".to_string())
-                                            } else if lobby.current_turn.is_none() {
-                                                Err("no active player turn".to_string())
-                                            } else if !move_z_delta.is_finite()
-                                                || !rotate_y_delta_deg.is_finite()
-                                            {
-                                                Err("ball setup deltas must be finite".to_string())
-                                            } else if lobby
-                                                .current_turn
-                                                .and_then(|turn| lobby.player_order.get(turn))
-                                                != Some(&player_id)
-                                            {
-                                                Err("not your turn".to_string())
-                                            } else {
-                                                Ok(player_id)
-                                            }
-                                        }
-                                    }
-                                }
+                    if !move_z_delta.is_finite() || !rotate_y_delta_deg.is_finite() {
+                        let _ = send_to_tx(
+                            &tx,
+                            &ServerMessage::Error {
+                                message: "ball setup deltas must be finite".to_string(),
+                            },
+                        );
+                    } else {
+                        match validate_controller_action(&state, &code, &session).await {
+                            Ok(ControllerAction::Apply { player_id }) => {
+                                broadcast_lobby(
+                                    &state,
+                                    &code,
+                                    &ServerMessage::AdjustBallSetup {
+                                        player_id,
+                                        move_z_delta,
+                                        rotate_y_delta_deg,
+                                    },
+                                )
+                                .await;
                             }
-                        }
-                    };
-
-                    match validation {
-                        Ok(player_id) => {
-                            broadcast_lobby(
-                                &state,
-                                &code,
-                                &ServerMessage::AdjustBallSetup {
-                                    player_id,
-                                    move_z_delta,
-                                    rotate_y_delta_deg,
-                                },
-                            )
-                            .await;
-                        }
-                        Err(message) => {
-                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                            Ok(ControllerAction::SkipReplay) => {
+                                broadcast_lobby(&state, &code, &ServerMessage::SkipReplay).await;
+                            }
+                            Err(message) => {
+                                let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                            }
                         }
                     }
                 } else {
@@ -535,46 +514,17 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
             }
             ClientMessage::ToggleZoom { zoomed_in } => {
                 if let Some(ConnectionRole::Player { code, session }) = role.clone() {
-                    let validation = {
-                        let mut s = state.lock().await;
-                        match s.player_sessions.get(&session) {
-                            None => Err("player session not found".to_string()),
-                            Some(sref) => {
-                                if sref.code != code {
-                                    Err("player is not in this lobby".to_string())
-                                } else {
-                                    let player_id = sref.player_id.clone();
-                                    match s.lobbies.get_mut(&code) {
-                                        None => Err("lobby not found".to_string()),
-                                        Some(lobby) => {
-                                            if !lobby.game_in_progress {
-                                                Err("game has not started".to_string())
-                                            } else if lobby.current_turn.is_none() {
-                                                Err("no active player turn".to_string())
-                                            } else if lobby
-                                                .current_turn
-                                                .and_then(|turn| lobby.player_order.get(turn))
-                                                != Some(&player_id)
-                                            {
-                                                Err("not your turn".to_string())
-                                            } else {
-                                                Ok(player_id)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    };
-
-                    match validation {
-                        Ok(player_id) => {
+                    match validate_controller_action(&state, &code, &session).await {
+                        Ok(ControllerAction::Apply { player_id }) => {
                             broadcast_lobby(
                                 &state,
                                 &code,
                                 &ServerMessage::ToggleZoom { player_id, zoomed_in },
                             )
                             .await;
+                        }
+                        Ok(ControllerAction::SkipReplay) => {
+                            broadcast_lobby(&state, &code, &ServerMessage::SkipReplay).await;
                         }
                         Err(message) => {
                             let _ = send_to_tx(&tx, &ServerMessage::Error { message });
@@ -585,6 +535,41 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                         &tx,
                         &ServerMessage::Error {
                             message: "only players can toggle zoom".into(),
+                        },
+                    );
+                }
+            }
+            ClientMessage::SkipReplay => {
+                if let Some(ConnectionRole::Player { code, session }) = role.clone() {
+                    match validate_controller_action(&state, &code, &session).await {
+                        Ok(ControllerAction::SkipReplay) => {
+                            broadcast_lobby(&state, &code, &ServerMessage::SkipReplay).await;
+                        }
+                        Ok(ControllerAction::Apply { .. }) => {}
+                        Err(message) => {
+                            let _ = send_to_tx(&tx, &ServerMessage::Error { message });
+                        }
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only players can skip replay".into(),
+                        },
+                    );
+                }
+            }
+            ClientMessage::ReplayComplete => {
+                if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
+                    let mut s = state.lock().await;
+                    if let Some(lobby) = s.lobbies.get_mut(&code) {
+                        lobby.replay_locked = false;
+                    }
+                } else {
+                    let _ = send_to_tx(
+                        &tx,
+                        &ServerMessage::Error {
+                            message: "only host can complete replay".into(),
                         },
                     );
                 }
@@ -887,6 +872,7 @@ async fn start_game(state: &SharedState, code: &str) -> Option<(String, Scoreboa
     let turn_index = next_connected_turn_index(lobby, None)?;
     lobby.game_in_progress = true;
     lobby.ball_in_play = false;
+    lobby.replay_locked = false;
     lobby.current_turn = Some(turn_index);
     lobby.bowling = BowlingState::default();
     lobby.bowling.pins_remaining = 10;
@@ -988,35 +974,7 @@ async fn relay_throw_event(
     force: f32,
     direction_x: f32,
     direction_z: f32,
-) -> Result<String, String> {
-    let mut s = state.lock().await;
-    let sref = s
-        .player_sessions
-        .get(session)
-        .ok_or_else(|| "player session not found".to_string())?;
-    if sref.code != code {
-        return Err("player is not in this lobby".into());
-    }
-    let player_id = sref.player_id.clone();
-    let lobby = s
-        .lobbies
-        .get_mut(code)
-        .ok_or_else(|| "lobby not found".to_string())?;
-    if !lobby.game_in_progress {
-        return Err("game has not started".into());
-    }
-    if lobby.ball_in_play {
-        return Err("throw already in progress".into());
-    }
-    let Some(current_turn) = lobby.current_turn else {
-        return Err("no active player turn".into());
-    };
-    let Some(active_player_id) = lobby.player_order.get(current_turn) else {
-        return Err("active player not found".into());
-    };
-    if active_player_id != &player_id {
-        return Err("not your turn".into());
-    }
+) -> Result<ControllerAction, String> {
     if !(0.0..=1.0).contains(&force) {
         return Err("throw force must be between 0 and 1".into());
     }
@@ -1029,8 +987,69 @@ async fn relay_throw_event(
     } else {
         (0.0, 1.0)
     };
-    lobby.ball_in_play = true;
-    Ok(player_id)
+
+    let mut s = state.lock().await;
+    let action = validate_controller_action_locked(&mut s, code, session)?;
+    match action {
+        ControllerAction::Apply { player_id } => {
+            let lobby = s
+                .lobbies
+                .get_mut(code)
+                .ok_or_else(|| "lobby not found".to_string())?;
+            if lobby.ball_in_play {
+                return Err("throw already in progress".into());
+            }
+            lobby.ball_in_play = true;
+            Ok(ControllerAction::Apply { player_id })
+        }
+        ControllerAction::SkipReplay => Ok(ControllerAction::SkipReplay),
+    }
+}
+
+async fn validate_controller_action(
+    state: &SharedState,
+    code: &str,
+    session: &str,
+) -> Result<ControllerAction, String> {
+    let mut s = state.lock().await;
+    validate_controller_action_locked(&mut s, code, session)
+}
+
+fn validate_controller_action_locked(
+    s: &mut AppState,
+    code: &str,
+    session: &str,
+) -> Result<ControllerAction, String> {
+    let sref = s
+        .player_sessions
+        .get(session)
+        .ok_or_else(|| "player session not found".to_string())?;
+    if sref.code != code {
+        return Err("player is not in this lobby".into());
+    }
+
+    let player_id = sref.player_id.clone();
+    let lobby = s
+        .lobbies
+        .get_mut(code)
+        .ok_or_else(|| "lobby not found".to_string())?;
+    if !lobby.game_in_progress {
+        return Err("game has not started".into());
+    }
+    let Some(current_turn) = lobby.current_turn else {
+        return Err("no active player turn".into());
+    };
+    let Some(active_player_id) = lobby.player_order.get(current_turn) else {
+        return Err("active player not found".into());
+    };
+    if active_player_id != &player_id {
+        return Err("not your turn".into());
+    }
+    if lobby.replay_locked {
+        return Ok(ControllerAction::SkipReplay);
+    }
+
+    Ok(ControllerAction::Apply { player_id })
 }
 
 async fn stop_game(state: &SharedState, code: &str) -> Result<(), String> {
@@ -1044,6 +1063,7 @@ async fn stop_game(state: &SharedState, code: &str) -> Result<(), String> {
     }
     lobby.game_in_progress = false;
     lobby.ball_in_play = false;
+    lobby.replay_locked = false;
     lobby.current_turn = None;
     Ok(())
 }
@@ -1113,6 +1133,7 @@ async fn apply_throw_result(
     frame.rolls.push(knocked_pins);
 
     lobby.ball_in_play = false;
+    lobby.replay_locked = true;
     if let Some((next_roll, next_pins_remaining)) = continuing_turn_state(frame_index, &frame.rolls)
     {
         lobby.bowling.current_roll = next_roll;

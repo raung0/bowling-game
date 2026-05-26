@@ -321,6 +321,9 @@ impl ControllerApp {
             ServerMessage::ShotResolved { announcement } => {
                 self.push_log(format!("shot resolved: {announcement}"));
             }
+            ServerMessage::SkipReplay => {
+                self.push_log("replay skip requested".to_string());
+            }
             ServerMessage::ToggleZoom { player_id, zoomed_in } => {
                 self.zoomed_in = zoomed_in;
                 self.push_log(format!("zoom relayed for {player_id}: {zoomed_in}"));

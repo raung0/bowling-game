@@ -458,6 +458,14 @@ impl GameState {
         )
     }
 
+    fn clear_controller_input_state(&mut self) {
+        self.controller_holding = false;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = Vector3::ZERO;
+        self.controller_motion_history.clear();
+    }
+
     fn gameplay_screen(&self) -> Screen {
         if self.is_mobile && self.session_role == Some(SessionRole::Player) {
             Screen::Controller
@@ -1367,11 +1375,7 @@ impl GameState {
         self.info_text = announcement;
         self.replay_saved_zoomed_in = self.zoomed_in;
 
-        self.controller_holding = false;
-        self.controller_force = 0.0;
-        self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_baseline_accel = Vector3::ZERO;
-        self.controller_motion_history.clear();
+        self.clear_controller_input_state();
 
         if self.replay_samples.is_empty() {
             godot_print!("replay skipped: no samples recorded");
@@ -1516,6 +1520,7 @@ impl GameState {
     }
 
     fn finish_replay(&mut self) {
+        let was_active = self.is_replay_active();
         godot_print!("end replay playback");
         self.set_replay_camera_priorities(None);
 
@@ -1537,6 +1542,10 @@ impl GameState {
             start_fallen: 0,
             recording_started: false,
         };
+
+        if was_active && self.is_host() {
+            self.send_message(ClientMessage::ReplayComplete);
+        }
     }
 
     fn handle_replay_audio_finished(&mut self) {
@@ -1573,14 +1582,13 @@ impl GameState {
         });
     }
 
-    fn maybe_skip_replay_on_aim_input(&mut self) -> bool {
-        if !self.is_local_player_turn() {
-            return false;
-        }
-
+    fn consume_controller_input_for_replay(&mut self) -> bool {
+        self.stop_ball_setup_hold();
+        self.clear_controller_input_state();
         if self.is_replay_active() {
-            self.stop_ball_setup_hold();
-            self.finish_replay();
+            if self.is_local_player_turn() {
+                self.send_message(ClientMessage::SkipReplay);
+            }
             return true;
         }
 
@@ -2049,11 +2057,7 @@ impl GameState {
             }
             ServerMessage::TurnChanged { current_player_id } => {
                 self.current_player_id = current_player_id;
-                self.controller_holding = false;
-                self.controller_force = 0.0;
-                self.controller_direction = Vector2::new(0.0, 1.0);
-                self.controller_baseline_accel = Vector3::ZERO;
-                self.controller_motion_history.clear();
+                self.clear_controller_input_state();
                 self.stop_ball_setup_hold();
                 self.set_zoomed_in(false);
                 self.reset_replay_flow();
@@ -2065,11 +2069,11 @@ impl GameState {
                 direction_x,
                 direction_z,
             } => {
-                self.controller_holding = false;
-                self.controller_force = 0.0;
-                self.controller_direction = Vector2::new(0.0, 1.0);
-                self.controller_baseline_accel = Vector3::ZERO;
-                self.controller_motion_history.clear();
+                if self.is_replay_active() {
+                    return;
+                }
+
+                self.clear_controller_input_state();
                 self.stop_ball_setup_hold();
                 self.replay_recording_missing_marker_warned = false;
                 if self.is_host()
@@ -2091,11 +2095,20 @@ impl GameState {
             ServerMessage::ShotResolved { announcement } => {
                 self.begin_shot_replay(announcement);
             }
+            ServerMessage::SkipReplay => {
+                if self.is_replay_active() {
+                    self.finish_replay();
+                }
+            }
             ServerMessage::AdjustBallSetup {
                 player_id,
                 move_z_delta,
                 rotate_y_delta_deg,
             } => {
+                if self.is_replay_active() {
+                    return;
+                }
+
                 if self.is_host() {
                     self.apply_ball_setup_adjustment(move_z_delta, rotate_y_delta_deg);
                     self.push_ball_setup_log(&player_id, move_z_delta, rotate_y_delta_deg);
@@ -2105,6 +2118,10 @@ impl GameState {
                 player_id,
                 zoomed_in,
             } => {
+                if self.is_replay_active() {
+                    return;
+                }
+
                 if self.is_host() {
                     self.set_zoomed_in(zoomed_in);
                     godot_print!("zoom toggle from {}: {}", player_id, zoomed_in);
@@ -2149,11 +2166,7 @@ impl GameState {
                 godot_error!("SERVER ERROR: {}", message);
                 self.info_text = format!("Error: {message}");
 
-                self.controller_holding = false;
-                self.controller_force = 0.0;
-                self.controller_direction = Vector2::new(0.0, 1.0);
-                self.controller_baseline_accel = Vector3::ZERO;
-                self.controller_motion_history.clear();
+                self.clear_controller_input_state();
                 self.stop_ball_setup_hold();
                 self.set_zoomed_in(false);
 
@@ -2304,11 +2317,7 @@ impl GameState {
         self.players.clear();
         self.current_player_id.clear();
         self.scoreboard = ScoreboardState::default();
-        self.controller_holding = false;
-        self.controller_force = 0.0;
-        self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_baseline_accel = Vector3::ZERO;
-        self.controller_motion_history.clear();
+        self.clear_controller_input_state();
         self.calibration_active = false;
         self.calibration_samples.clear();
         self.reset_replay_flow();
@@ -2494,10 +2503,10 @@ impl GameState {
 
     #[func]
     fn on_hold_button_down(&mut self) {
-        if self.zoomed_in {
+        if self.consume_controller_input_for_replay() {
             return;
         }
-        if self.is_replay_active() {
+        if self.zoomed_in {
             return;
         }
         self.stop_ball_setup_hold();
@@ -2514,25 +2523,17 @@ impl GameState {
 
     #[func]
     fn on_hold_button_up(&mut self) {
-        if !self.controller_holding {
+        if self.consume_controller_input_for_replay() {
             return;
         }
-        if self.is_replay_active() {
-            self.controller_holding = false;
-            self.controller_force = 0.0;
-            self.controller_direction = Vector2::new(0.0, 1.0);
-            self.controller_baseline_accel = Vector3::ZERO;
-            self.controller_motion_history.clear();
+        if !self.controller_holding {
             return;
         }
 
         self.controller_holding = false;
         let force = self.controller_force.clamp(0.0, 1.0);
         let direction = self.controller_direction;
-        self.controller_force = 0.0;
-        self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_baseline_accel = Vector3::ZERO;
-        self.controller_motion_history.clear();
+        self.clear_controller_input_state();
         if self.calibration_active {
             self.calibration_samples.push(direction.x);
             if self.calibration_samples.len() >= controller::CALIBRATION_THROW_COUNT {
@@ -2564,6 +2565,9 @@ impl GameState {
 
     #[func]
     fn on_zoom_pressed(&mut self) {
+        if self.consume_controller_input_for_replay() {
+            return;
+        }
         if !(self.calibration_active || self.is_local_player_turn()) {
             return;
         }
@@ -2576,7 +2580,7 @@ impl GameState {
 
     #[func]
     fn on_move_left_button_down(&mut self) {
-        if self.maybe_skip_replay_on_aim_input() {
+        if self.consume_controller_input_for_replay() {
             return;
         }
         self.start_ball_setup_hold(BallSetupAction::MoveLeft);
@@ -2584,7 +2588,7 @@ impl GameState {
 
     #[func]
     fn on_move_right_button_down(&mut self) {
-        if self.maybe_skip_replay_on_aim_input() {
+        if self.consume_controller_input_for_replay() {
             return;
         }
         self.start_ball_setup_hold(BallSetupAction::MoveRight);
@@ -2597,7 +2601,7 @@ impl GameState {
 
     #[func]
     fn on_rotate_left_button_down(&mut self) {
-        if self.maybe_skip_replay_on_aim_input() {
+        if self.consume_controller_input_for_replay() {
             return;
         }
         self.start_ball_setup_hold(BallSetupAction::RotateLeft);
@@ -2605,7 +2609,7 @@ impl GameState {
 
     #[func]
     fn on_rotate_right_button_down(&mut self) {
-        if self.maybe_skip_replay_on_aim_input() {
+        if self.consume_controller_input_for_replay() {
             return;
         }
         self.start_ball_setup_hold(BallSetupAction::RotateRight);
@@ -2625,10 +2629,7 @@ impl GameState {
         self.stop_ball_setup_hold();
         self.calibration_active = true;
         self.calibration_samples.clear();
-        self.controller_holding = false;
-        self.controller_force = 0.0;
-        self.controller_direction = Vector2::new(0.0, 1.0);
-        self.controller_motion_history.clear();
+        self.clear_controller_input_state();
         self.screen = Screen::Controller;
     }
 }

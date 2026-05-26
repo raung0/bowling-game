@@ -48,6 +48,8 @@ pub enum ClientMessage {
     ToggleZoom {
         zoomed_in: bool,
     },
+    SkipReplay,
+    ReplayComplete,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +105,7 @@ pub enum ServerMessage {
         player_id: String,
         zoomed_in: bool,
     },
+    SkipReplay,
     ScoreboardUpdated {
         scoreboard: ScoreboardState,
     },
