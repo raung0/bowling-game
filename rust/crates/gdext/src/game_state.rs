@@ -134,6 +134,8 @@ pub struct GameState {
     music_playlist: Vec<Gd<AudioStream>>,
     music_order: Vec<usize>,
     music_order_index: usize,
+    music_track_was_playing: bool,
+    replay_audio_waiting_for_finish: bool,
     master_volume: f32,
     music_volume: f32,
     sfx_volume: f32,
@@ -190,6 +192,8 @@ impl INode for GameState {
             music_playlist: Vec::new(),
             music_order: Vec::new(),
             music_order_index: 0,
+            music_track_was_playing: false,
+            replay_audio_waiting_for_finish: false,
             master_volume: DEFAULT_MASTER_VOLUME,
             music_volume: DEFAULT_MUSIC_VOLUME,
             sfx_volume: DEFAULT_SFX_VOLUME,
@@ -217,17 +221,8 @@ impl INode for GameState {
         self.pending_ball_respawn = true;
         self.capture_zoomed_in_camera_aim_offset();
 
-        if let Some(mut replay_audio) = self.try_replay_audio_player() {
-            replay_audio.connect(
-                "finished",
-                &self.base().callable("on_replay_audio_finished"),
-            );
-        } else {
+        if self.try_replay_audio_player().is_none() {
             godot_warn!("ReplayAudioPlayer missing under GameManager; replay audio disabled");
-        }
-
-        if let Some(mut music_player) = self.try_music_player() {
-            music_player.connect("finished", &self.base().callable("on_music_finished"));
         }
 
         let mut join_button = self
@@ -365,6 +360,8 @@ impl INode for GameState {
         self.accel = self.browser_accel();
         self.is_mobile = self.is_mobile_web();
         self.apply_audio_settings();
+        self.poll_replay_audio_finished();
+        self.poll_music_finished();
         self.start_music_if_needed();
 
         self.process_pending_ball_respawn();
@@ -619,6 +616,7 @@ impl GameState {
             if let Some(mut music_player) = self.try_music_player() {
                 music_player.call("stop", &[]);
             }
+            self.music_track_was_playing = false;
             return;
         }
 
@@ -626,9 +624,55 @@ impl GameState {
             return;
         };
 
+        if self.music_playlist.is_empty() || self.music_order.is_empty() {
+            return;
+        }
+
         if !music_player.is_playing() {
             self.play_current_music_track();
         }
+
+        self.music_track_was_playing = true;
+    }
+
+    fn poll_music_finished(&mut self) {
+        if self.is_mobile {
+            self.music_track_was_playing = false;
+            return;
+        }
+
+        let Some(music_player) = self.try_music_player() else {
+            return;
+        };
+
+        if music_player.is_playing() {
+            self.music_track_was_playing = true;
+            return;
+        }
+
+        if self.music_track_was_playing {
+            self.music_track_was_playing = false;
+            self.handle_music_finished();
+        }
+    }
+
+    fn poll_replay_audio_finished(&mut self) {
+        if !self.replay_audio_waiting_for_finish {
+            return;
+        }
+
+        let Some(replay_audio) = self.try_replay_audio_player() else {
+            self.replay_audio_waiting_for_finish = false;
+            self.start_replay_playback();
+            return;
+        };
+
+        if replay_audio.is_playing() {
+            return;
+        }
+
+        self.replay_audio_waiting_for_finish = false;
+        self.start_replay_playback();
     }
 
     fn controller_status_text(&self) -> String {
@@ -1125,6 +1169,7 @@ impl GameState {
         self.replay_cameras.clear();
         self.clear_replay_ghosts();
         self.hide_live_replay_subjects(true);
+        self.replay_audio_waiting_for_finish = false;
         if let Some(mut audio) = self.try_replay_audio_player() {
             audio.call("stop", &[]);
         }
@@ -1404,6 +1449,7 @@ impl GameState {
             audio.call("stop", &[]);
             audio.set("stream", &stream.to_variant());
             audio.call("play", &[]);
+            self.replay_audio_waiting_for_finish = true;
         } else {
             godot_warn!("ReplayAudioPlayer missing under GameManager; starting replay immediately");
             self.start_replay_playback();
@@ -1562,10 +1608,6 @@ impl GameState {
         if was_active && self.is_host() {
             self.send_message(ClientMessage::ReplayComplete);
         }
-    }
-
-    fn handle_replay_audio_finished(&mut self) {
-        self.start_replay_playback();
     }
 
     fn handle_music_finished(&mut self) {
@@ -2344,16 +2386,6 @@ impl GameState {
 
 #[godot_api]
 impl GameState {
-    #[func]
-    fn on_replay_audio_finished(&mut self) {
-        self.handle_replay_audio_finished();
-    }
-
-    #[func]
-    fn on_music_finished(&mut self) {
-        self.handle_music_finished();
-    }
-
     #[func]
     fn on_settings_pressed(&mut self) {
         if self.is_mobile || self.screen != Screen::MainMenu {
