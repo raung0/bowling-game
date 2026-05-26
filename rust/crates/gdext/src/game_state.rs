@@ -359,6 +359,7 @@ impl INode for GameState {
 
         self.process_pending_ball_respawn();
         self.sync_zoomed_in_camera_to_aim();
+        self.sync_camera_target_to_ball_with_clamp();
         self.update_direction_indicator(delta);
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
