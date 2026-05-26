@@ -126,6 +126,7 @@ pub struct GameState {
     replay_pin_ghosts: Vec<Gd<Node3D>>,
     direction_indicator: Option<Gd<Node3D>>,
     direction_indicator_fade_progress: f64,
+    zoomed_in_camera_aim_offset: Option<Transform3D>,
     game_phase: GamePhase,
     leave_holding: bool,
     leave_hold_secs: f64,
@@ -174,6 +175,7 @@ impl INode for GameState {
             replay_pin_ghosts: Vec::new(),
             direction_indicator: None,
             direction_indicator_fade_progress: 0.0,
+            zoomed_in_camera_aim_offset: None,
             game_phase: GamePhase::TakingShot {
                 launched: false,
                 waiting_report: false,
@@ -196,6 +198,7 @@ impl INode for GameState {
         self.prepare_replay_cameras();
         self.set_zoomed_in(false);
         self.pending_ball_respawn = true;
+        self.capture_zoomed_in_camera_aim_offset();
 
         if let Some(mut replay_audio) = self.try_replay_audio_player() {
             replay_audio.connect(
@@ -307,7 +310,7 @@ impl INode for GameState {
         self.is_mobile = self.is_mobile_web();
 
         self.process_pending_ball_respawn();
-        self.sync_zoomed_in_camera_z();
+        self.sync_zoomed_in_camera_to_aim();
         self.update_direction_indicator(delta);
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
@@ -501,7 +504,34 @@ impl GameState {
         }
     }
 
-    fn sync_zoomed_in_camera_z(&mut self) {
+    fn capture_zoomed_in_camera_aim_offset(&mut self) {
+        let Some(start) = self.try_ball_start_point() else {
+            return;
+        };
+
+        let Some(camera) = self.try_zoomed_in_camera() else {
+            return;
+        };
+
+        let start_transform = start.get_global_transform();
+        let camera_transform = camera.get_global_transform();
+        self.zoomed_in_camera_aim_offset = Some(start_transform.affine_inverse() * camera_transform);
+    }
+
+    fn sync_zoomed_in_camera_to_aim(&mut self) {
+        let taking_aim = matches!(
+            self.game_phase,
+            GamePhase::TakingShot {
+                launched: false,
+                waiting_report: false,
+                ..
+            }
+        );
+
+        if !taking_aim {
+            return;
+        }
+
         let Some(start) = self.try_ball_start_point() else {
             return;
         };
@@ -510,10 +540,16 @@ impl GameState {
             return;
         };
 
-        let start_z = start.get_global_transform().origin.z;
-        let mut camera_transform = camera.get_global_transform();
-        camera_transform.origin.z = start_z;
-        camera.set_global_transform(camera_transform);
+        if self.zoomed_in_camera_aim_offset.is_none() {
+            self.capture_zoomed_in_camera_aim_offset();
+        }
+
+        let Some(offset) = self.zoomed_in_camera_aim_offset else {
+            return;
+        };
+
+        let start_transform = start.get_global_transform();
+        camera.set_global_transform(start_transform * offset);
     }
 
     fn ensure_direction_indicator(&mut self) -> Option<Gd<Node3D>> {
@@ -969,7 +1005,7 @@ impl GameState {
     fn update_replay_recording(&mut self) {
         let GamePhase::TakingShot {
             launched,
-            waiting_report,
+            waiting_report: _,
             recording_started,
             ..
         } = &self.game_phase
@@ -977,7 +1013,7 @@ impl GameState {
             return;
         };
 
-        if !*launched || *waiting_report {
+        if !*launched {
             return;
         }
 
@@ -1341,24 +1377,31 @@ impl GameState {
             return;
         };
 
-        let (launched, mut waiting_report, mut settle_secs, start_fallen) = match &self.game_phase {
+        let (launched, mut waiting_report, mut settle_secs, start_fallen, recording_started) =
+            match &self.game_phase {
             GamePhase::TakingShot {
                 launched,
                 waiting_report,
                 settle_secs,
                 start_fallen,
-                recording_started: _,
+                recording_started,
                 ..
-            } => (*launched, *waiting_report, *settle_secs, *start_fallen),
+            } => (
+                *launched,
+                *waiting_report,
+                *settle_secs,
+                *start_fallen,
+                *recording_started,
+            ),
             _ => return,
         };
 
-        let (passed_end, settled) = {
+        let passed_end = {
             let ball = ball.bind();
-            (ball.has_passed_end(), ball.is_settled())
+            ball.has_passed_end()
         };
 
-        if launched && !waiting_report && (passed_end || settled) {
+        if launched && !waiting_report && passed_end {
             waiting_report = true;
             settle_secs = 0.0;
         }
@@ -1372,7 +1415,7 @@ impl GameState {
                     waiting_report,
                     settle_secs,
                     start_fallen,
-                    recording_started: false,
+                    recording_started,
                 };
                 return;
             }
