@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://dy3wsajldrccu"]
 
-[ext_resource type="Theme" uid="uid://d2u5pcqha73ql" path="res://Assets/themes/main_theme.tres" id="1_b3bc3"]
+[ext_resource type="Theme" uid="uid://dtmv8ivrpnjdp" path="res://addons/scifi_theme/scifi.tres" id="1_b3bc3"]
 
 [sub_resource type="LabelSettings" id="LabelSettings_wusub"]
 font_size = 43
@@ -149,11 +149,20 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="Label" type="Label" parent="Info" unique_id=1848952369]
+[node name="VBoxContainer" type="VBoxContainer" parent="Info" unique_id=1551889924]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Label" type="Label" parent="Info/VBoxContainer" unique_id=1848952369]
 layout_mode = 2
 theme_override_font_sizes/font_size = 36
 text = "Loading..."
 horizontal_alignment = 1
+
+[node name="Back" type="Button" parent="Info/VBoxContainer" unique_id=802081920]
+custom_minimum_size = Vector2(240, 48)
+layout_mode = 2
+text = "Back"
 
 [node name="SettingsPanel" type="PanelContainer" parent="." unique_id=1373155501]
 visible = false
@@ -167,6 +176,8 @@ offset_left = -230.0
 offset_top = -170.0
 offset_right = 230.0
 offset_bottom = 170.0
+grow_horizontal = 2
+grow_vertical = 2
 
 [node name="MarginContainer" type="MarginContainer" parent="SettingsPanel" unique_id=625223910]
 layout_mode = 2
@@ -190,7 +201,6 @@ text = "Master"
 
 [node name="Master" type="HSlider" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=1365721634]
 layout_mode = 2
-min_value = 0.0
 max_value = 1.0
 step = 0.01
 value = 1.0
@@ -201,7 +211,6 @@ text = "Music"
 
 [node name="Music" type="HSlider" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=623703535]
 layout_mode = 2
-min_value = 0.0
 max_value = 1.0
 step = 0.01
 value = 0.5
@@ -212,7 +221,6 @@ text = "SFX"
 
 [node name="Sfx" type="HSlider" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=1770379436]
 layout_mode = 2
-min_value = 0.0
 max_value = 1.0
 step = 0.01
 value = 0.8
@@ -276,6 +284,13 @@ custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 size_flags_horizontal = 0
 text = "Stop Game"
+
+[node name="LeaveGameButton" type="Button" parent="GameHud/MarginContainer/VBoxContainer" unique_id=719420331]
+visible = false
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 0
+text = "Leave Game"
 
 [node name="ScoreboardPanel" type="Control" parent="GameHud" unique_id=564122119]
 layout_mode = 1

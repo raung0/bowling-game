@@ -77,6 +77,7 @@ pub fn render_game_ui(
     current_player: &str,
     lobby_code: &str,
     is_host: bool,
+    show_spectate_leave: bool,
 ) {
     let mut turn_label = state
         .base_mut()
@@ -102,6 +103,11 @@ pub fn render_game_ui(
         .base_mut()
         .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton");
     stop_game_button.set_visible(is_host);
+
+    let mut leave_game_button = state
+        .base_mut()
+        .get_node_as::<Button>("UiManager/GameHud/MarginContainer/VBoxContainer/LeaveGameButton");
+    leave_game_button.set_visible(show_spectate_leave);
 }
 
 pub fn render_scoreboard(state: &mut GameState, scoreboard: &ScoreboardState) {
@@ -230,7 +236,7 @@ where
 pub fn render_info_text(state: &mut GameState, text: &str) {
     let mut info_label = state
         .base_mut()
-        .get_node_as::<Label>("UiManager/Info/Label");
+        .get_node_as::<Label>("UiManager/Info/VBoxContainer/Label");
     if text.is_empty() {
         info_label.set_text("Loading...");
     } else {

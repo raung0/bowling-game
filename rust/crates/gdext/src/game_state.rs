@@ -278,6 +278,12 @@ impl INode for GameState {
         let mut game_stop_button = self.base().get_node_as::<Button>(
             "UiManager/GameHud/MarginContainer/VBoxContainer/StopGameButton",
         );
+        let mut game_leave_button = self.base().get_node_as::<Button>(
+            "UiManager/GameHud/MarginContainer/VBoxContainer/LeaveGameButton",
+        );
+        let mut info_back_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/Info/VBoxContainer/Back");
         let mut zoom_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Zoom");
@@ -333,6 +339,8 @@ impl INode for GameState {
         controller_back_button.connect("button_up", &self.base().callable("on_leave_button_up"));
         game_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         game_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
+        game_leave_button.connect("pressed", &self.base().callable("on_leave_game_pressed"));
+        info_back_button.connect("pressed", &self.base().callable("on_info_back_pressed"));
         zoom_button.connect("pressed", &self.base().callable("on_zoom_pressed"));
         settings_button.connect("pressed", &self.base().callable("on_settings_pressed"));
         settings_close_button.connect("pressed", &self.base().callable("on_settings_close_pressed"));
@@ -397,6 +405,7 @@ impl INode for GameState {
         };
         let lobby_code = self.lobby_code.clone();
         let is_host = self.is_host();
+        let show_spectate_leave = self.is_spectator();
         let scoreboard = self.scoreboard.clone();
         let info_text = self.info_text.clone();
 
@@ -416,7 +425,13 @@ impl INode for GameState {
             controller_enabled,
             self.zoomed_in,
         );
-        rendering::render_game_ui(self, &current_player_label, &lobby_code, is_host);
+        rendering::render_game_ui(
+            self,
+            &current_player_label,
+            &lobby_code,
+            is_host,
+            show_spectate_leave,
+        );
         rendering::render_scoreboard(self, &scoreboard);
         rendering::render_info_text(self, &info_text);
     }
@@ -430,6 +445,10 @@ impl INode for GameState {
 impl GameState {
     fn is_host(&self) -> bool {
         self.session_role == Some(SessionRole::Host)
+    }
+
+    fn is_spectator(&self) -> bool {
+        self.session_role.is_none()
     }
 
     fn gameplay_screen(&self) -> Screen {
@@ -2330,7 +2349,7 @@ impl GameState {
             .to_string();
         if code.len() != 5 || !code.chars().all(|c| c.is_ascii_digit()) {
             self.info_text = "Lobby code must be 5 digits".to_string();
-            self.screen = Screen::Info;
+            self.screen = Screen::MainMenu;
             return;
         }
 
@@ -2349,7 +2368,33 @@ impl GameState {
 
     #[func]
     fn on_spectate_pressed(&mut self) {
+        let code = self
+            .base()
+            .get_node_as::<LineEdit>("UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/LobbyCode")
+            .get_text()
+            .to_string()
+            .trim()
+            .to_string();
+        if code.len() != 5 || !code.chars().all(|c| c.is_ascii_digit()) {
+            self.info_text = "Lobby code must be 5 digits".to_string();
+            self.screen = Screen::Info;
+            return;
+        }
+        self.lobby_code = code;
         self.screen = Screen::Game;
+    }
+
+    #[func]
+    fn on_leave_game_pressed(&mut self) {
+        if !self.is_spectator() {
+            return;
+        }
+        self.leave_game();
+    }
+
+    #[func]
+    fn on_info_back_pressed(&mut self) {
+        self.screen = Screen::MainMenu;
     }
 
     #[func]
