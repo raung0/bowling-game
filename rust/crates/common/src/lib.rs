@@ -91,6 +91,9 @@ pub enum ServerMessage {
         direction_x: f32,
         direction_z: f32,
     },
+    ShotResolved {
+        announcement: String,
+    },
     AdjustBallSetup {
         player_id: String,
         move_z_delta: f32,

@@ -1,0 +1,9 @@
+[gd_scene format=3 uid="uid://cmutt0kwfd6p6"]
+
+[ext_resource type="Script" uid="uid://dmah5rt2m7jiw" path="res://Assets/direction_indicator.gd" id="1_7unn1"]
+[ext_resource type="PackedScene" uid="uid://btflw1vdwu4l0" path="res://Assets/DirectionIndicatorActual.tscn" id="2_io42t"]
+
+[node name="DirectionIndicator" type="Node3D" unique_id=487056961 node_paths=PackedStringArray("path")]
+script = ExtResource("1_7unn1")
+path = NodePath("")
+indicator_scene = ExtResource("2_io42t")

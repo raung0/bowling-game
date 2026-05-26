@@ -54,6 +54,7 @@ mass = 8.0
 physics_material_override = SubResource("PhysicsMaterial_l240j")
 linear_damp = 0.05
 angular_damp = 0.1
+reset_when_past_end = false
 
 [node name="BowlingBallReal" parent="." unique_id=572944494 instance=ExtResource("1_ojniv")]
 transform = Transform3D(0.985, 0, 0, 0, 0.985, 0, 0, 0, 0.985, 0, 0, 0)

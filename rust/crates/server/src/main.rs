@@ -595,7 +595,13 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
             } => {
                 if let Some(ConnectionRole::Host { code, .. }) = role.clone() {
                     match apply_throw_result(&state, &code, knocked_pins, standing_pins).await {
-                        Ok(scoreboard) => {
+                        Ok((scoreboard, announcement)) => {
+                            broadcast_lobby(
+                                &state,
+                                &code,
+                                &ServerMessage::ShotResolved { announcement },
+                            )
+                            .await;
                             broadcast_lobby(
                                 &state,
                                 &code,
@@ -1047,7 +1053,7 @@ async fn apply_throw_result(
     code: &str,
     knocked_pins: u8,
     standing_pins: u8,
-) -> Result<ScoreboardState, String> {
+) -> Result<(ScoreboardState, String), String> {
     let mut s = state.lock().await;
     let lobby = s
         .lobbies
@@ -1078,6 +1084,18 @@ async fn apply_throw_result(
     if standing_pins + knocked_pins != lobby.bowling.pins_remaining {
         return Err("standing pins do not match throw result".into());
     }
+
+    let announcement = if knocked_pins == 10 && lobby.bowling.current_roll == 1 {
+        "strike".to_string()
+    } else if standing_pins == 0 {
+        "spare".to_string()
+    } else if knocked_pins == 0 {
+        "gutter ball".to_string()
+    } else if knocked_pins >= 7 {
+        "nice shot".to_string()
+    } else {
+        "shot".to_string()
+    };
 
     let player_state = lobby
         .bowling
@@ -1117,7 +1135,7 @@ async fn apply_throw_result(
         lobby.bowling.game_over = true;
     }
 
-    Ok(build_scoreboard(lobby))
+    Ok((build_scoreboard(lobby), announcement))
 }
 
 async fn remove_player_session(

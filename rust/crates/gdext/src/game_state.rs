@@ -6,7 +6,7 @@ use common::{
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{Button, LineEdit, Node, Node3D, PackedScene, WebSocketPeer},
+    classes::{AudioStream, AudioStreamPlayer, Button, LineEdit, MeshInstance3D, Node, Node3D, PackedScene, RigidBody3D, WebSocketPeer},
     global::Error,
     prelude::*,
 };
@@ -46,6 +46,38 @@ enum BallSetupAction {
     RotateRight,
 }
 
+#[derive(Clone)]
+struct ReplayFrame {
+    ball: Transform3D,
+    pins: Vec<Transform3D>,
+}
+
+#[derive(Clone)]
+struct ReplayCameraInfo {
+    node: Gd<Node3D>,
+    name: String,
+    half_speed: bool,
+}
+
+#[derive(Clone, PartialEq)]
+enum GamePhase {
+    TakingShot {
+        launched: bool,
+        waiting_report: bool,
+        settle_secs: f64,
+        start_fallen: i32,
+        recording_started: bool,
+    },
+    Shot,
+    AdvertiseResult { announcement: String },
+    PlayReplay {
+        announcement: String,
+        camera_index: usize,
+        frame_index: usize,
+        frame_hold: bool,
+    },
+}
+
 #[derive(GodotClass, Getters)]
 #[class(base=Node)]
 pub struct GameState {
@@ -73,16 +105,20 @@ pub struct GameState {
     calibration_active: bool,
     calibration_samples: Vec<f32>,
     calibration_offset_x: f32,
-    host_ball_was_launched: bool,
-    host_throw_start_fallen: i32,
-    host_throw_waiting_report: bool,
-    host_throw_settle_secs: f64,
     pending_ball_respawn: bool,
     ball_start_initial_transform: Option<Transform3D>,
     ball_setup_action: Option<BallSetupAction>,
     ball_setup_hold_secs: f64,
     ball_setup_next_repeat_secs: f64,
     zoomed_in: bool,
+    replay_samples: Vec<ReplayFrame>,
+    replay_saved_zoomed_in: bool,
+    replay_pending_scoreboard_previous: Option<ScoreboardState>,
+    replay_recording_missing_marker_warned: bool,
+    replay_cameras: Vec<ReplayCameraInfo>,
+    replay_ball_ghost: Option<Gd<Node3D>>,
+    replay_pin_ghosts: Vec<Gd<Node3D>>,
+    game_phase: GamePhase,
     leave_holding: bool,
     leave_hold_secs: f64,
 
@@ -115,16 +151,26 @@ impl INode for GameState {
             calibration_active: false,
             calibration_samples: Vec::new(),
             calibration_offset_x: 0.0,
-            host_ball_was_launched: false,
-            host_throw_start_fallen: 0,
-            host_throw_waiting_report: false,
-            host_throw_settle_secs: 0.0,
             pending_ball_respawn: false,
             ball_start_initial_transform: None,
             ball_setup_action: None,
             ball_setup_hold_secs: 0.0,
             ball_setup_next_repeat_secs: 0.0,
             zoomed_in: false,
+            replay_samples: Vec::new(),
+            replay_saved_zoomed_in: false,
+            replay_pending_scoreboard_previous: None,
+            replay_recording_missing_marker_warned: false,
+            replay_cameras: Vec::new(),
+            replay_ball_ghost: None,
+            replay_pin_ghosts: Vec::new(),
+            game_phase: GamePhase::TakingShot {
+                launched: false,
+                waiting_report: false,
+                settle_secs: 0.0,
+                start_fallen: 0,
+                recording_started: false,
+            },
             leave_holding: false,
             leave_hold_secs: 0.0,
         }
@@ -132,9 +178,20 @@ impl INode for GameState {
 
     fn ready(&mut self) {
         self.base_mut().set_process(true);
+        self.base_mut().set_physics_process(true);
         self.capture_ball_start_initial_transform();
+        if let Some(game_manager) = self.try_game_manager_root() {
+            self.disable_tweening_on_phantom_cameras(game_manager.upcast::<Node>());
+        }
+        self.prepare_replay_cameras();
         self.set_zoomed_in(false);
         self.pending_ball_respawn = true;
+
+        if let Some(mut replay_audio) = self.try_replay_audio_player() {
+            replay_audio.connect("finished", &self.base().callable("on_replay_audio_finished"));
+        } else {
+            godot_warn!("ReplayAudioPlayer missing under GameManager; replay audio disabled");
+        }
 
         let mut join_button = self
             .base()
@@ -225,6 +282,7 @@ impl INode for GameState {
         self.is_mobile = self.is_mobile_web();
 
         self.process_pending_ball_respawn();
+        self.sync_zoomed_in_camera_z();
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
         self.update_controller_strength();
@@ -277,6 +335,11 @@ impl INode for GameState {
         rendering::render_game_ui(self, &current_player_label, &lobby_code, is_host);
         rendering::render_scoreboard(self, &scoreboard);
         rendering::render_info_text(self, &info_text);
+    }
+
+    fn physics_process(&mut self, _delta: f64) {
+        self.update_replay_recording();
+        self.update_replay_playback();
     }
 }
 
@@ -337,6 +400,12 @@ impl GameState {
             .and_then(|node| node.try_cast::<Node3D>().ok())
     }
 
+    fn try_zoomed_in_camera(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/PhantomCameraZoomedIn")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
     fn capture_ball_start_initial_transform(&mut self) {
         if self.ball_start_initial_transform.is_some() {
             return;
@@ -371,7 +440,14 @@ impl GameState {
     }
 
     fn apply_ball_setup_adjustment(&mut self, move_z_delta: f32, rotate_y_delta_deg: f32) {
-        if self.host_ball_was_launched || self.host_throw_waiting_report {
+        if !matches!(
+            self.game_phase,
+            GamePhase::TakingShot {
+                launched: false,
+                waiting_report: false,
+                ..
+            }
+        ) {
             return;
         }
 
@@ -393,6 +469,21 @@ impl GameState {
         }
     }
 
+    fn sync_zoomed_in_camera_z(&mut self) {
+        let Some(start) = self.try_ball_start_point() else {
+            return;
+        };
+
+        let Some(mut camera) = self.try_zoomed_in_camera() else {
+            return;
+        };
+
+        let start_z = start.get_global_transform().origin.z;
+        let mut camera_transform = camera.get_global_transform();
+        camera_transform.origin.z = start_z;
+        camera.set_global_transform(camera_transform);
+    }
+
     fn push_ball_setup_log(&self, player_id: &str, move_z_delta: f32, rotate_y_delta_deg: f32) {
         godot_print!(
             "ball setup adjust from {}: move_z_delta={:.3}, rotate_y_delta_deg={:.3}",
@@ -409,20 +500,586 @@ impl GameState {
 
         self.zoomed_in = zoomed_in;
         self.stop_ball_setup_hold();
+        self.set_live_camera_priorities(zoomed_in);
+    }
 
-        if let Some(mut normal_camera) = self
-            .base()
-            .get_node_or_null("GameManager/PhantomCameraNormal")
-        {
-            normal_camera.set("priority", &(if zoomed_in { 1 } else { 2 }).to_variant());
+    fn try_replay_cameras_root(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/ReplayCameras")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn collect_replay_cameras(&self) -> Vec<ReplayCameraInfo> {
+        let Some(root) = self.try_replay_cameras_root() else {
+            return Vec::new();
+        };
+
+        let mut cameras = Vec::new();
+        for child in root.get_children().iter_shared() {
+            if child.has_method("set_priority") && child.has_method("set_tween_duration") {
+                if let Ok(camera) = child.try_cast::<Node3D>() {
+                    let name = camera.get_name().to_string();
+                    cameras.push(ReplayCameraInfo {
+                        half_speed: name.to_ascii_lowercase().contains("slow"),
+                        name,
+                        node: camera,
+                    });
+                }
+            } else {
+                godot_warn!("Ignoring non-PhantomCamera child under ReplayCameras");
+            }
         }
 
-        if let Some(mut zoom_camera) = self
-            .base()
-            .get_node_or_null("GameManager/PhantomCameraZoomedIn")
-        {
-            zoom_camera.set("priority", &(if zoomed_in { 2 } else { 0 }).to_variant());
+        cameras
+    }
+
+    fn prepare_replay_cameras(&mut self) {
+        self.replay_cameras = self.collect_replay_cameras();
+
+        for camera in &mut self.replay_cameras {
+            camera.node.set("tween_duration", &0.0.to_variant());
         }
+
+        if self.replay_cameras.is_empty() {
+            godot_warn!("ReplayCameras has no camera children; replay will be skipped");
+        }
+    }
+
+    fn collect_live_cameras(&self) -> Vec<ReplayCameraInfo> {
+        let Some(game_manager) = self.try_game_manager_root() else {
+            return Vec::new();
+        };
+
+        let mut cameras = Vec::new();
+        for child in game_manager.get_children().iter_shared() {
+            if child.get_name().to_string() == "ReplayCameras" {
+                continue;
+            }
+
+            if child.has_method("set_priority") && child.has_method("set_tween_duration") {
+                if let Ok(camera) = child.try_cast::<Node3D>() {
+                    let name = camera.get_name().to_string();
+                    cameras.push(ReplayCameraInfo {
+                        half_speed: name.to_ascii_lowercase().contains("slow"),
+                        name,
+                        node: camera,
+                    });
+                }
+            }
+        }
+
+        cameras
+    }
+
+    fn set_live_camera_priorities(&mut self, zoomed_in: bool) {
+        let cameras = self.collect_live_cameras();
+
+        let mut active_rank = 0;
+        for camera in cameras {
+            let is_zoom = camera.name.to_ascii_lowercase().contains("zoom");
+            let is_active_group = if zoomed_in { is_zoom } else { !is_zoom };
+            let priority = if is_active_group {
+                let value = if active_rank == 0 { 2 } else { 1 };
+                active_rank += 1;
+                value
+            } else {
+                0
+            };
+
+            let mut node = camera.node;
+            node.set("priority", &priority.to_variant());
+        }
+    }
+
+    fn retarget_live_cameras_to_ball(&self, ball: &Gd<Ball>) {
+        let ball = ball.to_variant();
+        for camera in self.collect_live_cameras() {
+            let mut node = camera.node;
+            node.set("follow_target", &ball);
+            node.set("look_at_target", &ball);
+        }
+    }
+
+    fn disable_tweening_on_phantom_cameras(&self, mut node: Gd<Node>) {
+        if node.has_method("set_tween_duration") {
+            node.call("set_tween_duration", &[0.0.to_variant()]);
+        }
+
+        for child in node.get_children().iter_shared() {
+            self.disable_tweening_on_phantom_cameras(child);
+        }
+    }
+
+    fn try_game_manager_root(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn try_replay_node(&self, path: &str) -> Option<Gd<Node>> {
+        self.try_game_manager_root()
+            .and_then(|root| root.get_node_or_null(path))
+    }
+
+    fn try_replay_start_marker(&self) -> Option<Gd<Node3D>> {
+        self.try_replay_node("ReplayStartMarker")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn try_replay_audio_player(&self) -> Option<Gd<AudioStreamPlayer>> {
+        self.try_replay_node("ReplayAudioPlayer")
+            .and_then(|node| node.try_cast::<AudioStreamPlayer>().ok())
+    }
+
+    fn replay_audio_path(announcement: &str) -> &'static str {
+        match announcement {
+            "strike" => "res://Assets/NiceStrike.wav",
+            "spare" => "res://Assets/NiceSpare.wav",
+            "gutter ball" => "res://Assets/GutterBall.wav",
+            _ => "res://Assets/NiceShot.wav",
+        }
+    }
+
+    fn try_replay_ghost_root(&self) -> Option<Gd<Node3D>> {
+        self.try_replay_node("ReplayGhosts")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn clear_replay_ghosts(&mut self) {
+        if let Some(root) = self.try_replay_ghost_root() {
+            let children = root.get_children();
+            for mut child in children.iter_shared() {
+                child.queue_free();
+            }
+        }
+
+        self.replay_ball_ghost = None;
+        self.replay_pin_ghosts.clear();
+    }
+
+    fn reset_replay_flow(&mut self) {
+        self.game_phase = GamePhase::TakingShot {
+            launched: false,
+            waiting_report: false,
+            settle_secs: 0.0,
+            start_fallen: 0,
+            recording_started: false,
+        };
+        self.replay_samples.clear();
+        self.replay_pending_scoreboard_previous = None;
+        self.replay_recording_missing_marker_warned = false;
+        self.replay_cameras.clear();
+        self.clear_replay_ghosts();
+        self.hide_live_replay_subjects(true);
+        if let Some(mut audio) = self.try_replay_audio_player() {
+            audio.call("stop", &[]);
+        }
+    }
+
+    fn hide_live_replay_subjects(&mut self, visible: bool) {
+        if let Some(mut ball) = self.try_ball() {
+            ball.set_visible(visible);
+        }
+
+        for (_, mut pin_root) in self.pin_roots() {
+            pin_root.set_visible(visible);
+        }
+    }
+
+    fn pin_roots(&self) -> Vec<(usize, Gd<Node3D>)> {
+        let mut roots = Vec::new();
+
+        let Some(pins_root) = self.try_pins_root() else {
+            return roots;
+        };
+
+        for pin_root in pins_root.get_children().iter_shared() {
+            let pin_index = pin_root.get("pin_index").try_to::<i32>().unwrap_or(-1);
+            if pin_index < 0 {
+                continue;
+            }
+
+            if let Ok(pin_root) = pin_root.try_cast::<Node3D>() {
+                roots.push((pin_index as usize, pin_root));
+            }
+        }
+
+        roots.sort_by_key(|(pin_index, _)| *pin_index);
+        roots
+    }
+
+    fn try_pins_root(&self) -> Option<Gd<Node3D>> {
+        let game_manager = self.try_game_manager()?;
+
+        for child in game_manager.get_children().iter_shared() {
+            let Ok(node3d) = child.try_cast::<Node3D>() else {
+                continue;
+            };
+
+            for pin in node3d.get_children().iter_shared() {
+                let pin_index = pin.get("pin_index").try_to::<i32>().unwrap_or(-1);
+                if pin_index >= 0 {
+                    return Some(node3d);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn pin_bodies(&self) -> Vec<(usize, Gd<RigidBody3D>)> {
+        let mut bodies = Vec::new();
+
+        let Some(pins_root) = self.try_pins_root() else {
+            return bodies;
+        };
+
+        for pin_root in pins_root.get_children().iter_shared() {
+            let pin_index = pin_root.get("pin_index").try_to::<i32>().unwrap_or(-1);
+            if pin_index < 0 {
+                continue;
+            }
+
+            let mut body = None;
+            for child in pin_root.get_children().iter_shared() {
+                if let Ok(rigid_body) = child.try_cast::<RigidBody3D>() {
+                    body = Some(rigid_body);
+                    break;
+                }
+            }
+
+            if let Some(body) = body {
+                bodies.push((pin_index as usize, body));
+            }
+        }
+
+        bodies.sort_by_key(|(pin_index, _)| *pin_index);
+        bodies
+    }
+
+    fn copy_mesh_instances_recursive(&self, source: Gd<Node>, ghost_parent: &mut Gd<Node3D>) {
+        for child in source.get_children().iter_shared() {
+            if let Ok(mesh) = child.clone().try_cast::<MeshInstance3D>() {
+                let mut ghost_mesh = MeshInstance3D::new_alloc();
+                ghost_mesh.set("mesh", &mesh.get("mesh"));
+                ghost_mesh.set_transform(mesh.get_transform());
+                ghost_parent.add_child(&ghost_mesh);
+            }
+
+            self.copy_mesh_instances_recursive(child, ghost_parent);
+        }
+    }
+
+    fn spawn_replay_ghosts(&mut self) {
+        self.clear_replay_ghosts();
+
+        let Some(mut ghost_root) = self.try_replay_ghost_root() else {
+            return;
+        };
+
+        if let Some(ball) = self.try_ball() {
+            let mut ball_ghost = Node3D::new_alloc();
+            ball_ghost.set_global_transform(ball.get_global_transform());
+            self.copy_mesh_instances_recursive(ball.clone().upcast::<Node>(), &mut ball_ghost);
+            ghost_root.add_child(&ball_ghost);
+            self.replay_ball_ghost = Some(ball_ghost);
+        }
+
+        for (_, pin_root) in self.pin_roots() {
+            let mut pin_ghost = Node3D::new_alloc();
+            pin_ghost.set_global_transform(pin_root.get_global_transform());
+            self.copy_mesh_instances_recursive(pin_root.clone().upcast::<Node>(), &mut pin_ghost);
+            ghost_root.add_child(&pin_ghost);
+            self.replay_pin_ghosts.push(pin_ghost);
+        }
+    }
+
+    fn update_replay_ghosts(&mut self, sample: &ReplayFrame) {
+        if let Some(ball_ghost) = self.replay_ball_ghost.as_mut() {
+            ball_ghost.set_global_transform(sample.ball);
+        }
+
+        for (ghost, pin_transform) in self.replay_pin_ghosts.iter_mut().zip(sample.pins.iter()) {
+            ghost.set_global_transform(*pin_transform);
+        }
+    }
+
+    fn set_replay_subjects_frozen(&mut self, frozen: bool) {
+        if let Some(mut ball) = self.try_ball() {
+            ball.set_freeze_enabled(frozen);
+            ball.set_sleeping(frozen);
+        }
+
+        for (_, mut pin_body) in self.pin_bodies() {
+            pin_body.set_freeze_enabled(frozen);
+            pin_body.set_sleeping(frozen);
+        }
+    }
+
+    fn set_replay_camera_priorities(&mut self, active_camera_index: Option<usize>) {
+        for (camera_index, replay_camera) in self.replay_cameras.iter_mut().enumerate() {
+            let priority = if Some(camera_index) == active_camera_index {
+                4
+            } else {
+                0
+            };
+
+            replay_camera.node.set("priority", &priority.to_variant());
+        }
+
+        if active_camera_index.is_none() {
+            self.set_zoomed_in(self.replay_saved_zoomed_in);
+        }
+    }
+
+    fn capture_replay_frame(&mut self) {
+        let Some(ball) = self.try_ball() else {
+            return;
+        };
+
+        let mut pins = Vec::new();
+        for (_, pin_body) in self.pin_bodies() {
+            pins.push(pin_body.get_global_transform());
+        }
+
+        self.replay_samples.push(ReplayFrame {
+            ball: ball.get_global_transform(),
+            pins,
+        });
+    }
+
+    fn update_replay_recording(&mut self) {
+        let GamePhase::TakingShot {
+            launched,
+            waiting_report,
+            recording_started,
+            ..
+        } = &self.game_phase
+        else {
+            return;
+        };
+
+        if !*launched || *waiting_report {
+            return;
+        }
+
+        let Some(ball) = self.try_ball() else {
+            return;
+        };
+
+        if !ball.bind().is_launched() {
+            return;
+        }
+
+        let Some(marker) = self.try_replay_start_marker() else {
+            if !self.replay_recording_missing_marker_warned {
+                self.replay_recording_missing_marker_warned = true;
+                godot_warn!("ReplayStartMarker missing under GameManager; replay capture disabled for this shot");
+            }
+            return;
+        };
+
+        let ball_x = ball.get_global_position().x;
+        let marker_x = marker.get_global_position().x;
+
+        let mut should_capture = true;
+        let recording_started = *recording_started;
+
+        if !recording_started {
+            if ball_x <= marker_x {
+                godot_print!("replay not started yet: ball_x={}, marker_x={}", ball_x, marker_x);
+                should_capture = false;
+            } else {
+                if let GamePhase::TakingShot {
+                    recording_started,
+                    ..
+                } = &mut self.game_phase
+                {
+                    *recording_started = true;
+                }
+                self.replay_samples.clear();
+                godot_print!("start recording replay samples: ball_x={}, marker_x={}", ball_x, marker_x);
+            }
+        }
+
+        if should_capture {
+            self.capture_replay_frame();
+        }
+    }
+
+    fn begin_shot_replay(&mut self, announcement: String) {
+        let replay_audio_path = Self::replay_audio_path(&announcement);
+        self.game_phase = GamePhase::AdvertiseResult {
+            announcement: announcement.clone(),
+        };
+        self.info_text = announcement;
+        self.replay_saved_zoomed_in = self.zoomed_in;
+
+        self.controller_holding = false;
+        self.controller_force = 0.0;
+        self.controller_direction = Vector2::new(0.0, 1.0);
+        self.controller_baseline_accel = Vector3::ZERO;
+        self.controller_motion_history.clear();
+
+        if self.replay_samples.is_empty() {
+            godot_print!("replay skipped: no samples recorded");
+            self.finish_replay();
+            return;
+        }
+
+        if let Some(mut audio) = self.try_replay_audio_player() {
+            let stream = load::<AudioStream>(replay_audio_path);
+            audio.call("stop", &[]);
+            audio.set("stream", &stream.to_variant());
+            audio.call("play", &[]);
+        } else {
+            godot_warn!("ReplayAudioPlayer missing under GameManager; starting replay immediately");
+            self.start_replay_playback();
+        }
+    }
+
+    fn start_replay_playback(&mut self) {
+        let announcement = match &self.game_phase {
+            GamePhase::AdvertiseResult { announcement } => announcement.clone(),
+            _ => return,
+        };
+
+        self.prepare_replay_cameras();
+
+        if self.replay_samples.is_empty() {
+            self.finish_replay();
+            return;
+        }
+
+        if self.replay_cameras.is_empty() {
+            self.finish_replay();
+            return;
+        }
+
+        godot_print!("start replay playback");
+        godot_print!("replay cameras discovered: {}", self.replay_cameras.len());
+        for (index, camera) in self.replay_cameras.iter().enumerate() {
+            godot_print!(
+                "replay camera {}: {} ({})",
+                index,
+                camera.name,
+                if camera.half_speed { "half speed" } else { "normal speed" }
+            );
+        }
+        self.set_replay_subjects_frozen(true);
+        self.spawn_replay_ghosts();
+        self.hide_live_replay_subjects(false);
+        self.set_replay_camera_priorities(Some(0));
+        self.game_phase = GamePhase::PlayReplay {
+            announcement,
+            camera_index: 0,
+            frame_index: 0,
+            frame_hold: false,
+        };
+    }
+
+    fn update_replay_playback(&mut self) {
+        let (announcement, camera_index, frame_index, frame_hold) = match &self.game_phase {
+            GamePhase::PlayReplay {
+                announcement,
+                camera_index,
+                frame_index,
+                frame_hold,
+            } => (announcement.clone(), *camera_index, *frame_index, *frame_hold),
+            _ => return,
+        };
+
+        if camera_index >= self.replay_cameras.len() {
+            self.finish_replay();
+            return;
+        }
+
+        let camera_half_speed = self.replay_cameras[camera_index].half_speed;
+
+        if frame_index >= self.replay_samples.len() {
+            let next_camera = camera_index + 1;
+            if next_camera >= self.replay_cameras.len() {
+                self.finish_replay();
+                return;
+            }
+
+            godot_print!("advance replay camera: {} -> {}", camera_index, next_camera);
+            self.set_replay_camera_priorities(Some(next_camera));
+            self.game_phase = GamePhase::PlayReplay {
+                announcement,
+                camera_index: next_camera,
+                frame_index: 0,
+                frame_hold: false,
+            };
+            return;
+        }
+
+        let sample = self.replay_samples[frame_index].clone();
+
+        self.update_replay_ghosts(&sample);
+
+        let (next_frame_index, next_frame_hold) = if camera_half_speed {
+            if frame_hold {
+                (frame_index + 1, false)
+            } else {
+                (frame_index, true)
+            }
+        } else {
+            (frame_index + 1, false)
+        };
+
+        if next_frame_index >= self.replay_samples.len() {
+            let next_camera = camera_index + 1;
+            if next_camera >= self.replay_cameras.len() {
+                self.finish_replay();
+                return;
+            }
+
+            godot_print!("advance replay camera: {} -> {}", camera_index, next_camera);
+            self.set_replay_camera_priorities(Some(next_camera));
+            self.game_phase = GamePhase::PlayReplay {
+                announcement,
+                camera_index: next_camera,
+                frame_index: 0,
+                frame_hold: false,
+            };
+            return;
+        }
+
+        self.game_phase = GamePhase::PlayReplay {
+            announcement,
+            camera_index,
+            frame_index: next_frame_index,
+            frame_hold: next_frame_hold,
+        };
+    }
+
+    fn finish_replay(&mut self) {
+        godot_print!("end replay playback");
+        self.set_replay_camera_priorities(None);
+
+        self.clear_replay_ghosts();
+        self.hide_live_replay_subjects(true);
+
+        if let Some(previous) = self.replay_pending_scoreboard_previous.take() {
+            self.sync_host_lane_to_scoreboard(&previous);
+        }
+
+        self.set_replay_subjects_frozen(false);
+
+        self.replay_samples.clear();
+        self.replay_cameras.clear();
+        self.game_phase = GamePhase::TakingShot {
+            launched: false,
+            waiting_report: false,
+            settle_secs: 0.0,
+            start_fallen: 0,
+            recording_started: false,
+        };
+    }
+
+    fn handle_replay_audio_finished(&mut self) {
+        self.start_replay_playback();
     }
 
     fn start_ball_setup_hold(&mut self, action: BallSetupAction) {
@@ -496,15 +1153,7 @@ impl GameState {
         game_root.add_child(&ball);
         ball.bind_mut().reset_ball();
 
-        if let Some(mut normal_camera) = game_root.get_node_or_null("PhantomCameraNormal") {
-            normal_camera.set("follow_target", &ball.to_variant());
-            normal_camera.set("look_at_target", &ball.to_variant());
-        }
-
-        if let Some(mut zoom_camera) = game_root.get_node_or_null("PhantomCameraZoomedIn") {
-            zoom_camera.set("follow_target", &ball.to_variant());
-            zoom_camera.set("look_at_target", &ball.to_variant());
-        }
+        self.retarget_live_cameras_to_ball(&ball);
 
         self.pending_ball_respawn = false;
     }
@@ -521,10 +1170,13 @@ impl GameState {
         }
         self.restore_ball_start_point_transform();
         self.request_ball_respawn();
-        self.host_ball_was_launched = false;
-        self.host_throw_start_fallen = 0;
-        self.host_throw_waiting_report = false;
-        self.host_throw_settle_secs = 0.0;
+        self.game_phase = GamePhase::TakingShot {
+            launched: false,
+            waiting_report: false,
+            settle_secs: 0.0,
+            start_fallen: 0,
+            recording_started: false,
+        };
     }
 
     fn update_controller_strength(&mut self) {
@@ -549,34 +1201,45 @@ impl GameState {
             return;
         }
 
-        let launched = self
-            .try_ball()
-            .map(|ball| ball.bind().is_launched())
-            .unwrap_or(false);
-
-        if launched {
-            self.host_ball_was_launched = true;
-            self.host_throw_waiting_report = false;
-            self.host_throw_settle_secs = 0.0;
+        let Some(ball) = self.try_ball() else {
             return;
+        };
+
+        let (launched, mut waiting_report, mut settle_secs, start_fallen) = match &self.game_phase {
+            GamePhase::TakingShot {
+                launched,
+                waiting_report,
+                settle_secs,
+                start_fallen,
+                recording_started: _,
+                ..
+            } => (*launched, *waiting_report, *settle_secs, *start_fallen),
+            _ => return,
+        };
+
+        let (passed_end, settled) = {
+            let ball = ball.bind();
+            (ball.has_passed_end(), ball.is_settled())
+        };
+
+        if launched && !waiting_report && (passed_end || settled) {
+            waiting_report = true;
+            settle_secs = 0.0;
         }
 
-        if self.host_ball_was_launched && !self.host_throw_waiting_report {
-            self.host_throw_waiting_report = true;
-            self.host_throw_settle_secs = 0.0;
-            return;
-        }
+        if waiting_report {
+            settle_secs += delta;
 
-        if self.host_throw_waiting_report {
-            self.host_throw_settle_secs += delta;
-
-            if self.host_throw_settle_secs < THROW_SETTLE_SECS {
+            if settle_secs < THROW_SETTLE_SECS {
+                self.game_phase = GamePhase::TakingShot {
+                    launched,
+                    waiting_report,
+                    settle_secs,
+                    start_fallen,
+                    recording_started: false,
+                };
                 return;
             }
-
-            self.host_ball_was_launched = false;
-            self.host_throw_waiting_report = false;
-            self.host_throw_settle_secs = 0.0;
 
             let fallen_count = self.current_fallen_count();
             let knocked = fallen_count.clamp(0, self.scoreboard.pins_remaining as i32) as u8;
@@ -595,7 +1258,13 @@ impl GameState {
                 standing_pins: standing,
             });
 
-            self.host_throw_start_fallen = fallen_count;
+            godot_print!("stop recording replay samples: {} frames", self.replay_samples.len());
+
+            self.game_phase = GamePhase::Shot;
+
+            if let Some(mut ball) = self.try_ball() {
+                ball.bind_mut().finish_throw();
+            }
         }
     }
 
@@ -611,7 +1280,6 @@ impl GameState {
         }
         if self.scoreboard.game_over {
             self.reset_lane_for_turn();
-            self.host_throw_start_fallen = 0;
             return;
         }
 
@@ -625,11 +1293,8 @@ impl GameState {
             }
 
             self.request_ball_respawn();
-
-            self.host_throw_start_fallen = 0;
         } else {
             self.reset_lane_for_turn();
-            self.host_throw_start_fallen = 0;
         }
     }
 
@@ -878,6 +1543,7 @@ impl GameState {
                 self.current_player_id = current_player_id;
                 self.stop_ball_setup_hold();
                 self.set_zoomed_in(false);
+                self.reset_replay_flow();
                 self.restore_ball_start_point_transform();
                 self.reset_lane_for_turn();
                 self.screen = self.gameplay_screen();
@@ -891,6 +1557,7 @@ impl GameState {
                 self.controller_motion_history.clear();
                 self.stop_ball_setup_hold();
                 self.set_zoomed_in(false);
+                self.reset_replay_flow();
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::ThrowEvent {
@@ -905,6 +1572,7 @@ impl GameState {
                 self.controller_baseline_accel = Vector3::ZERO;
                 self.controller_motion_history.clear();
                 self.stop_ball_setup_hold();
+                self.replay_recording_missing_marker_warned = false;
                 if self.is_host()
                     && let Some(mut ball) = self.try_ball()
                 {
@@ -912,8 +1580,17 @@ impl GameState {
                     ball.bind_mut()
                         .launch_throw(force, direction_x, direction_z);
                     self.restore_ball_start_point_transform();
-                    self.host_ball_was_launched = true;
+                    self.game_phase = GamePhase::TakingShot {
+                        launched: true,
+                        waiting_report: false,
+                        settle_secs: 0.0,
+                        start_fallen: self.current_fallen_count(),
+                        recording_started: false,
+                    };
                 }
+            }
+            ServerMessage::ShotResolved { announcement } => {
+                self.begin_shot_replay(announcement);
             }
             ServerMessage::AdjustBallSetup {
                 player_id,
@@ -935,7 +1612,18 @@ impl GameState {
                 let previous_scoreboard = self.scoreboard.clone();
                 self.current_player_id = scoreboard.current_player_id.clone();
                 self.scoreboard = scoreboard;
-                self.sync_host_lane_to_scoreboard(&previous_scoreboard);
+                if matches!(
+                    self.game_phase,
+                    GamePhase::TakingShot {
+                        launched: false,
+                        waiting_report: false,
+                        ..
+                    }
+                ) {
+                    self.sync_host_lane_to_scoreboard(&previous_scoreboard);
+                } else if self.replay_pending_scoreboard_previous.is_none() {
+                    self.replay_pending_scoreboard_previous = Some(previous_scoreboard);
+                }
                 self.screen = self.gameplay_screen();
             }
             ServerMessage::Info { message } => {
@@ -946,9 +1634,9 @@ impl GameState {
                 self.info_text = format!("Game stopped in lobby {code}");
                 self.scoreboard = ScoreboardState::default();
                 self.current_player_id.clear();
-                self.host_throw_start_fallen = 0;
                 self.stop_ball_setup_hold();
                 self.set_zoomed_in(false);
+                self.reset_replay_flow();
                 self.screen = if self.is_host() {
                     Screen::Host
                 } else {
@@ -967,9 +1655,7 @@ impl GameState {
                 self.stop_ball_setup_hold();
                 self.set_zoomed_in(false);
 
-                self.host_ball_was_launched = false;
-                self.host_throw_waiting_report = false;
-                self.host_throw_settle_secs = 0.0;
+                self.reset_replay_flow();
 
                 if message.contains("kicked")
                     || message.contains("lobby closed")
@@ -1123,9 +1809,7 @@ impl GameState {
         self.controller_motion_history.clear();
         self.calibration_active = false;
         self.calibration_samples.clear();
-        self.host_throw_start_fallen = 0;
-        self.host_throw_waiting_report = false;
-        self.host_throw_settle_secs = 0.0;
+        self.reset_replay_flow();
         self.sync_username_input();
         self.screen = Screen::MainMenu;
     }
@@ -1133,6 +1817,11 @@ impl GameState {
 
 #[godot_api]
 impl GameState {
+    #[func]
+    fn on_replay_audio_finished(&mut self) {
+        self.handle_replay_audio_finished();
+    }
+
     #[func]
     fn on_join_pressed(&mut self) {
         let code = self

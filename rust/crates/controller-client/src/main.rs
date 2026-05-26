@@ -318,6 +318,9 @@ impl ControllerApp {
                     "setup relayed for {player_id}: move_z={move_z_delta:+.3}, rotate_y={rotate_y_delta_deg:+.3}"
                 ));
             }
+            ServerMessage::ShotResolved { announcement } => {
+                self.push_log(format!("shot resolved: {announcement}"));
+            }
             ServerMessage::ToggleZoom { player_id, zoomed_in } => {
                 self.zoomed_in = zoomed_in;
                 self.push_log(format!("zoom relayed for {player_id}: {zoomed_in}"));

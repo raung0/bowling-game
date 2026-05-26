@@ -18,6 +18,7 @@ pub struct Ball {
     reset_when_past_end: bool,
 
     launched: bool,
+    shot_complete: bool,
 }
 
 #[godot_api]
@@ -27,8 +28,9 @@ impl IRigidBody3D for Ball {
             base,
             track_start: NodePath::default(),
             track_end: NodePath::default(),
-            reset_when_past_end: true,
+            reset_when_past_end: false,
             launched: false,
+            shot_complete: false,
         }
     }
 
@@ -38,6 +40,10 @@ impl IRigidBody3D for Ball {
 
     fn physics_process(&mut self, _delta: f64) {
         if !self.launched {
+            if self.shot_complete {
+                return;
+            }
+
             if let Some(start) = self.track_start_node() {
                 let mut rb = self.base_mut();
                 rb.set_global_transform(start.get_global_transform());
@@ -72,8 +78,11 @@ impl IRigidBody3D for Ball {
             let end_x = end.get_global_position().x;
             let horizontal_speed = Vector2::new(velocity.x, velocity.z).length();
 
-            (reset_when_past_end && ball_x > end_x)
-                || (ball_x < end_x && horizontal_speed < 0.05)
+            if reset_when_past_end {
+                (ball_x > end_x) || (ball_x < end_x && horizontal_speed < 0.05)
+            } else {
+                false
+            }
         };
 
         if should_reset {
@@ -104,6 +113,7 @@ impl Ball {
     #[func]
     pub fn launch_throw(&mut self, force: f32, direction_x: f32, direction_z: f32) {
         self.launched = true;
+        self.shot_complete = false;
 
         let force = force.clamp(0.0, 1.0);
         let speed = 4.1666665 + (8.333333 - 4.1666665) * force;
@@ -134,6 +144,7 @@ impl Ball {
     #[func]
     pub fn reset_ball(&mut self) {
         self.launched = false;
+        self.shot_complete = false;
 
         let Some(start) = self.track_start_node() else {
             return;
@@ -168,5 +179,32 @@ impl Ball {
     #[func]
     pub fn is_launched(&self) -> bool {
         self.launched
+    }
+
+    #[func]
+    pub fn finish_throw(&mut self) {
+        self.launched = false;
+        self.shot_complete = true;
+
+        let mut rb = self.base_mut();
+        rb.set_linear_velocity(Vector3::ZERO);
+        rb.set_angular_velocity(Vector3::ZERO);
+        rb.set_freeze_enabled(true);
+        rb.set_sleeping(true);
+    }
+
+    #[func]
+    pub fn is_settled(&self) -> bool {
+        let rb = self.base();
+        rb.get_linear_velocity().length() < 0.05 && rb.get_angular_velocity().length() < 0.05
+    }
+
+    #[func]
+    pub fn has_passed_end(&self) -> bool {
+        let Some(end) = self.track_end_node() else {
+            return false;
+        };
+
+        self.base().get_global_position().x > end.get_global_position().x
     }
 }

@@ -1,0 +1,23 @@
+[gd_scene format=3 uid="uid://btflw1vdwu4l0"]
+
+[ext_resource type="Shader" uid="uid://cq0hrks8ap7wc" path="res://Assets/DirectionIndicator.gdshader" id="1_vxpm6"]
+[ext_resource type="Script" uid="uid://dq70184v7nqj8" path="res://Assets/direction_indicator_animator.gd" id="2_vvmte"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_io42t"]
+render_priority = 0
+shader = ExtResource("1_vxpm6")
+shader_parameter/albedo_color = Color(1, 0, 0, 1)
+
+[sub_resource type="QuadMesh" id="QuadMesh_r6fkt"]
+material = SubResource("ShaderMaterial_io42t")
+size = Vector2(0.2, 0.5)
+orientation = 1
+
+[sub_resource type="Curve" id="Curve_gpkt1"]
+_data = [Vector2(0.0034013614, 0.010910153), 0.0, 0.0, 0, 0, Vector2(0.49659863, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[node name="MeshInstance3D" type="MeshInstance3D" unique_id=948409211]
+mesh = SubResource("QuadMesh_r6fkt")
+script = ExtResource("2_vvmte")
+fade_curve = SubResource("Curve_gpkt1")
