@@ -390,10 +390,18 @@ impl GameState {
     }
 
     fn current_player_name(&self) -> String {
-        self.players
+        self.scoreboard
+            .players
             .iter()
             .find(|player| player.player_id == self.current_player_id)
             .map(|player| player.username.clone())
+            .or_else(|| {
+                if self.current_player_id.is_empty() {
+                    None
+                } else {
+                    Some(self.current_player_id.clone())
+                }
+            })
             .unwrap_or_else(|| "Waiting for player".to_string())
     }
 
