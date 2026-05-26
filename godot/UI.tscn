@@ -53,6 +53,12 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Spectate Lobby"
 
+[node name="Settings" type="Button" parent="CenterContainer/VBoxContainer/Desktop/VBoxContainer" unique_id=1865601724]
+custom_minimum_size = Vector2(360, 52)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Settings"
+
 [node name="DesktopHost" type="CenterContainer" parent="CenterContainer/VBoxContainer" unique_id=949091076]
 layout_mode = 2
 
@@ -148,6 +154,73 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 36
 text = "Loading..."
 horizontal_alignment = 1
+
+[node name="SettingsPanel" type="PanelContainer" parent="." unique_id=1373155501]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -230.0
+offset_top = -170.0
+offset_right = 230.0
+offset_bottom = 170.0
+
+[node name="MarginContainer" type="MarginContainer" parent="SettingsPanel" unique_id=625223910]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 20
+
+[node name="VBoxContainer" type="VBoxContainer" parent="SettingsPanel/MarginContainer" unique_id=1848981219]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=2122892020]
+layout_mode = 2
+text = "Audio Settings"
+horizontal_alignment = 1
+
+[node name="MasterLabel" type="Label" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=1500226522]
+layout_mode = 2
+text = "Master"
+
+[node name="Master" type="HSlider" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=1365721634]
+layout_mode = 2
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+value = 1.0
+
+[node name="MusicLabel" type="Label" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=642919934]
+layout_mode = 2
+text = "Music"
+
+[node name="Music" type="HSlider" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=623703535]
+layout_mode = 2
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+value = 0.5
+
+[node name="SfxLabel" type="Label" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=84984170]
+layout_mode = 2
+text = "SFX"
+
+[node name="Sfx" type="HSlider" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=1770379436]
+layout_mode = 2
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+value = 0.8
+
+[node name="Close" type="Button" parent="SettingsPanel/MarginContainer/VBoxContainer" unique_id=82021157]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+text = "Close"
 
 [node name="GameHud" type="Control" parent="." unique_id=726381145]
 visible = false

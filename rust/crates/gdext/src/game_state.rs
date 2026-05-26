@@ -7,13 +7,13 @@ use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
     classes::{
-        AudioStream, AudioStreamPlayer, Button, LineEdit, MeshInstance3D, Node, Node3D,
+        AudioStream, AudioStreamPlayer, Button, HSlider, LineEdit, MeshInstance3D, Node, Node3D,
         PackedScene, RigidBody3D, WebSocketPeer,
     },
     global::Error,
     prelude::*,
 };
-use rand::Rng;
+use rand::{seq::SliceRandom, Rng};
 use std::{collections::VecDeque, str::FromStr};
 
 use crate::ball::Ball;
@@ -25,8 +25,11 @@ const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
 const THROW_SETTLE_SECS: f64 = 3.0;
 const LEAVE_HOLD_SECS: f64 = 5.0;
 const DIRECTION_INDICATOR_FADE_SECS: f64 = 0.25;
+const DEFAULT_MASTER_VOLUME: f32 = 1.0;
+const DEFAULT_MUSIC_VOLUME: f32 = 0.5;
+const DEFAULT_SFX_VOLUME: f32 = 0.8;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Screen {
     #[default]
     MainMenu,
@@ -127,6 +130,12 @@ pub struct GameState {
     direction_indicator: Option<Gd<Node3D>>,
     direction_indicator_fade_progress: f64,
     zoomed_in_camera_aim_offset: Option<Transform3D>,
+    music_playlist: Vec<Gd<AudioStream>>,
+    music_order: Vec<usize>,
+    music_order_index: usize,
+    master_volume: f32,
+    music_volume: f32,
+    sfx_volume: f32,
     game_phase: GamePhase,
     leave_holding: bool,
     leave_hold_secs: f64,
@@ -176,6 +185,12 @@ impl INode for GameState {
             direction_indicator: None,
             direction_indicator_fade_progress: 0.0,
             zoomed_in_camera_aim_offset: None,
+            music_playlist: Vec::new(),
+            music_order: Vec::new(),
+            music_order_index: 0,
+            master_volume: DEFAULT_MASTER_VOLUME,
+            music_volume: DEFAULT_MUSIC_VOLUME,
+            sfx_volume: DEFAULT_SFX_VOLUME,
             game_phase: GamePhase::TakingShot {
                 launched: false,
                 waiting_report: false,
@@ -207,6 +222,10 @@ impl INode for GameState {
             );
         } else {
             godot_warn!("ReplayAudioPlayer missing under GameManager; replay audio disabled");
+        }
+
+        if let Some(mut music_player) = self.try_music_player() {
+            music_player.connect("finished", &self.base().callable("on_music_finished"));
         }
 
         let mut join_button = self
@@ -260,6 +279,21 @@ impl INode for GameState {
         let mut zoom_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Zoom");
+        let mut settings_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/CenterContainer/VBoxContainer/Desktop/VBoxContainer/Settings");
+        let mut settings_close_button = self
+            .base()
+            .get_node_as::<Button>("UiManager/SettingsPanel/MarginContainer/VBoxContainer/Close");
+        let mut master_slider = self
+            .base()
+            .get_node_as::<HSlider>("UiManager/SettingsPanel/MarginContainer/VBoxContainer/Master");
+        let mut music_slider = self
+            .base()
+            .get_node_as::<HSlider>("UiManager/SettingsPanel/MarginContainer/VBoxContainer/Music");
+        let mut sfx_slider = self
+            .base()
+            .get_node_as::<HSlider>("UiManager/SettingsPanel/MarginContainer/VBoxContainer/Sfx");
 
         join_button.connect("pressed", &self.base().callable("on_join_pressed"));
         calibrate_button.connect("pressed", &self.base().callable("on_calibrate_pressed"));
@@ -298,9 +332,21 @@ impl INode for GameState {
         game_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         game_stop_button.connect("pressed", &self.base().callable("on_stop_game_pressed"));
         zoom_button.connect("pressed", &self.base().callable("on_zoom_pressed"));
+        settings_button.connect("pressed", &self.base().callable("on_settings_pressed"));
+        settings_close_button.connect("pressed", &self.base().callable("on_settings_close_pressed"));
+        master_slider.connect("value_changed", &self.base().callable("on_master_volume_changed"));
+        music_slider.connect("value_changed", &self.base().callable("on_music_volume_changed"));
+        sfx_slider.connect("value_changed", &self.base().callable("on_sfx_volume_changed"));
 
         self.ensure_username();
         self.load_calibration();
+        self.load_audio_settings();
+        master_slider.set_value(self.master_volume as f64);
+        music_slider.set_value(self.music_volume as f64);
+        sfx_slider.set_value(self.sfx_volume as f64);
+        self.apply_audio_settings();
+        self.prepare_music_playlist();
+        self.start_music_if_needed();
         self.sync_username_input();
         self.try_auto_reconnect();
     }
@@ -308,6 +354,8 @@ impl INode for GameState {
     fn process(&mut self, delta: f64) {
         self.accel = self.browser_accel();
         self.is_mobile = self.is_mobile_web();
+        self.apply_audio_settings();
+        self.start_music_if_needed();
 
         self.process_pending_ball_respawn();
         self.sync_zoomed_in_camera_to_aim();
@@ -323,6 +371,10 @@ impl INode for GameState {
         {
             let mut ui_manager = self.base_mut().get_node_as::<UiManager>("UiManager");
             ui_manager.bind_mut().set_screen(self.screen, is_mobile);
+        }
+
+        if self.screen != Screen::MainMenu || is_mobile {
+            self.set_settings_panel_visible(false);
         }
 
         let accel = self.accel;
@@ -405,6 +457,123 @@ impl GameState {
             .unwrap_or_else(|| "Waiting for player".to_string())
     }
 
+    fn try_music_player(&self) -> Option<Gd<AudioStreamPlayer>> {
+        self.base()
+            .get_node_or_null("MusicPlayer")
+            .and_then(|node| node.try_cast::<AudioStreamPlayer>().ok())
+    }
+
+    fn linear_to_db(level: f32) -> f32 {
+        if level <= 0.0001 {
+            -80.0
+        } else {
+            20.0 * level.log10()
+        }
+    }
+
+    fn set_settings_panel_visible(&mut self, visible: bool) {
+        let Some(mut panel) = self.base().get_node_or_null("UiManager/SettingsPanel") else {
+            return;
+        };
+        panel.set("visible", &visible.to_variant());
+    }
+
+    fn load_audio_settings(&mut self) {
+        self.master_volume = storage::get_value(self, storage::STORAGE_AUDIO_MASTER)
+            .parse::<f32>()
+            .ok()
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(DEFAULT_MASTER_VOLUME);
+        self.music_volume = storage::get_value(self, storage::STORAGE_AUDIO_MUSIC)
+            .parse::<f32>()
+            .ok()
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(DEFAULT_MUSIC_VOLUME);
+        self.sfx_volume = storage::get_value(self, storage::STORAGE_AUDIO_SFX)
+            .parse::<f32>()
+            .ok()
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(DEFAULT_SFX_VOLUME);
+    }
+
+    fn save_audio_settings(&self) {
+        storage::set_value(
+            self,
+            storage::STORAGE_AUDIO_MASTER,
+            &format!("{}", self.master_volume),
+        );
+        storage::set_value(
+            self,
+            storage::STORAGE_AUDIO_MUSIC,
+            &format!("{}", self.music_volume),
+        );
+        storage::set_value(self, storage::STORAGE_AUDIO_SFX, &format!("{}", self.sfx_volume));
+    }
+
+    fn apply_audio_settings(&mut self) {
+        let master = if self.is_mobile { 0.0 } else { self.master_volume };
+
+        if let Some(mut music_player) = self.try_music_player() {
+            let music_level = (master * self.music_volume).clamp(0.0, 1.0);
+            music_player.set("volume_db", &Self::linear_to_db(music_level).to_variant());
+            if self.is_mobile {
+                music_player.call("stop", &[]);
+            }
+        }
+
+        if let Some(mut replay_audio) = self.try_replay_audio_player() {
+            let sfx_level = (master * self.sfx_volume).clamp(0.0, 1.0);
+            replay_audio.set("volume_db", &Self::linear_to_db(sfx_level).to_variant());
+        }
+    }
+
+    fn prepare_music_playlist(&mut self) {
+        self.music_playlist = vec![
+            load::<AudioStream>("res://Music/0.mp3"),
+            load::<AudioStream>("res://Music/1.mp3"),
+        ];
+        self.music_order = (0..self.music_playlist.len()).collect();
+        self.music_order.shuffle(&mut rand::rng());
+        self.music_order_index = 0;
+    }
+
+    fn play_current_music_track(&mut self) {
+        if self.music_playlist.is_empty() || self.music_order.is_empty() || self.is_mobile {
+            return;
+        }
+
+        let Some(mut music_player) = self.try_music_player() else {
+            return;
+        };
+
+        if self.music_order_index >= self.music_order.len() {
+            self.music_order.shuffle(&mut rand::rng());
+            self.music_order_index = 0;
+        }
+
+        let track_index = self.music_order[self.music_order_index];
+        let track = self.music_playlist[track_index].clone();
+        music_player.set_stream(&track);
+        music_player.call("play", &[]);
+    }
+
+    fn start_music_if_needed(&mut self) {
+        if self.is_mobile {
+            if let Some(mut music_player) = self.try_music_player() {
+                music_player.call("stop", &[]);
+            }
+            return;
+        }
+
+        let Some(music_player) = self.try_music_player() else {
+            return;
+        };
+
+        if !music_player.is_playing() {
+            self.play_current_music_track();
+        }
+    }
+
     fn controller_status_text(&self) -> String {
         if self.calibration_active {
             format!(
@@ -431,6 +600,12 @@ impl GameState {
             .and_then(|node| node.try_cast::<Ball>().ok())
     }
 
+    fn try_camera_target(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/CameraTarget")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
     fn try_ball_start_point(&self) -> Option<Gd<Node3D>> {
         self.base()
             .get_node_or_null("GameManager/BallStartPoint")
@@ -441,6 +616,26 @@ impl GameState {
         self.base()
             .get_node_or_null("GameManager/BallEndPoint")
             .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
+    fn sync_camera_target_to_ball_with_clamp(&mut self) {
+        let Some(ball) = self.try_ball() else {
+            return;
+        };
+        let Some(marker) = self.try_replay_start_marker() else {
+            return;
+        };
+        let Some(mut camera_target) = self.try_camera_target() else {
+            return;
+        };
+
+        let ball_transform = ball.get_global_transform();
+        let marker_x = marker.get_global_position().x;
+
+        let mut target_transform = ball_transform;
+        target_transform.origin.x = ball_transform.origin.x.min(marker_x);
+        target_transform.origin.z = 0.0;
+        camera_target.set_global_transform(target_transform);
     }
 
     fn try_zoomed_in_camera(&self) -> Option<Gd<Node3D>> {
@@ -1262,6 +1457,20 @@ impl GameState {
         self.start_replay_playback();
     }
 
+    fn handle_music_finished(&mut self) {
+        if self.music_order.is_empty() {
+            return;
+        }
+
+        self.music_order_index += 1;
+        if self.music_order_index >= self.music_order.len() {
+            self.music_order.shuffle(&mut rand::rng());
+            self.music_order_index = 0;
+        }
+
+        self.play_current_music_track();
+    }
+
     fn start_ball_setup_hold(&mut self, action: BallSetupAction) {
         if !self.is_local_player_turn() {
             return;
@@ -2013,6 +2222,45 @@ impl GameState {
     #[func]
     fn on_replay_audio_finished(&mut self) {
         self.handle_replay_audio_finished();
+    }
+
+    #[func]
+    fn on_music_finished(&mut self) {
+        self.handle_music_finished();
+    }
+
+    #[func]
+    fn on_settings_pressed(&mut self) {
+        if self.is_mobile || self.screen != Screen::MainMenu {
+            return;
+        }
+        self.set_settings_panel_visible(true);
+    }
+
+    #[func]
+    fn on_settings_close_pressed(&mut self) {
+        self.set_settings_panel_visible(false);
+    }
+
+    #[func]
+    fn on_master_volume_changed(&mut self, value: f64) {
+        self.master_volume = (value as f32).clamp(0.0, 1.0);
+        self.apply_audio_settings();
+        self.save_audio_settings();
+    }
+
+    #[func]
+    fn on_music_volume_changed(&mut self, value: f64) {
+        self.music_volume = (value as f32).clamp(0.0, 1.0);
+        self.apply_audio_settings();
+        self.save_audio_settings();
+    }
+
+    #[func]
+    fn on_sfx_volume_changed(&mut self, value: f64) {
+        self.sfx_volume = (value as f32).clamp(0.0, 1.0);
+        self.apply_audio_settings();
+        self.save_audio_settings();
     }
 
     #[func]

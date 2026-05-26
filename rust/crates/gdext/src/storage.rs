@@ -7,6 +7,9 @@ pub const STORAGE_TOKEN: &str = "session_token";
 pub const STORAGE_CODE: &str = "lobby_code";
 pub const STORAGE_USERNAME: &str = "username";
 pub const STORAGE_CALIBRATION_X: &str = "calibration_x";
+pub const STORAGE_AUDIO_MASTER: &str = "audio_master";
+pub const STORAGE_AUDIO_MUSIC: &str = "audio_music";
+pub const STORAGE_AUDIO_SFX: &str = "audio_sfx";
 
 pub fn get_value(state: &GameState, key: &str) -> String {
     let Some(mut bridge) = state.base().get_node_or_null("WebBridge") else {

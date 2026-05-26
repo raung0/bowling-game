@@ -69,7 +69,7 @@ impl IRigidBody3D for Ball {
             // Let the release spin gradually bend the ball once it is back down near the lane.
             if position.y <= 0.25 && velocity.y <= 0.0 && velocity.x > 0.1 {
                 let spin = rb.get_angular_velocity().y;
-                let hook = velocity.x * spin * 0.01;
+                let hook = velocity.x * spin * 0.008;
                 velocity.z = (velocity.z + hook).clamp(-8.0, 8.0);
                 rb.set_linear_velocity(velocity);
             }
@@ -118,7 +118,8 @@ impl Ball {
         let force = force.clamp(0.0, 1.0);
         let speed = 4.1666665 + (8.333333 - 4.1666665) * force;
         let lift = direction_z.clamp(-1.0, 1.0) * 4.0;
-        let spin = direction_x.clamp(-1.0, 1.0);
+        let spin_input = direction_x.clamp(-1.0, 1.0);
+        let spin = spin_input.signum() * spin_input.abs().powf(1.5);
         let aim_direction = self
             .track_start_node()
             .map(|start| {

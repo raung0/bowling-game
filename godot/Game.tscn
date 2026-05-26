@@ -50,14 +50,14 @@ spawn_position = NodePath("PinsSpawnPoint")
 all_pins_scene = ExtResource("1_xkndl")
 
 [node name="PhantomCameraNormal" type="Node3D" parent="." unique_id=64845123 node_paths=PackedStringArray("follow_target", "look_at_target")]
-transform = Transform3D(5.9708185e-08, 0.53818893, -0.84282285, -2.9854093e-08, 0.842824, 0.53818816, 1.0017371, -2.9802315e-08, 5.960455e-08, -0.83, 0.7229853, 0)
+transform = Transform3D(5.9708185e-08, 0.5381888, -0.84282285, -2.9854093e-08, 0.8428238, 0.53818816, 1.0017371, -2.980231e-08, 5.960455e-08, -0.83, 0.53, 0)
 top_level = true
 script = ExtResource("5_r0x5m")
 priority = 1
 follow_mode = 2
-follow_target = NodePath("../BowlingBall")
+follow_target = NodePath("../CameraTarget")
 look_at_mode = 2
-look_at_target = NodePath("../BowlingBall")
+look_at_target = NodePath("../CameraTarget")
 tween_resource = SubResource("Resource_yhmtn")
 tween_on_load = false
 camera_3d_resource = SubResource("Resource_2vekm")
@@ -66,6 +66,8 @@ align_transform_with_view = Callable()
 align_position_with_view = Callable()
 align_rotation_with_view = Callable()
 metadata/_custom_type_script = "uid://csjccrhj5wnx7"
+
+[node name="CameraTarget" type="Node3D" parent="." unique_id=864837973]
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1705421882]
 transform = Transform3D(0.87855047, -0.06282528, -0.47349977, 0.4776495, 0.11555581, 0.8709178, 0, -0.9913122, 0.13153008, 0, 0, 0)
@@ -76,8 +78,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.182, 0.1, 0)
 [node name="BowlingLane" parent="." unique_id=1987325189 instance=ExtResource("1_wbfu4")]
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1042158667]
-physics_interpolation_mode = 1
-transform = Transform3D(5.9604645e-08, 0.53818905, -0.8428242, -2.9802322e-08, 0.84282416, 0.53818905, 1, -2.9802322e-08, 5.9604645e-08, -0.83, 0.7229853, 0)
+transform = Transform3D(5.9604645e-08, 0.53818905, -0.8428242, -2.9802322e-08, 0.84282416, 0.53818905, 1, -2.9802322e-08, 5.9604645e-08, -0.83, 0.53, 0)
 top_level = true
 current = true
 
