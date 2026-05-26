@@ -1048,6 +1048,9 @@ fn validate_controller_action_locked(
     if lobby.replay_locked {
         return Ok(ControllerAction::SkipReplay);
     }
+    if lobby.ball_in_play {
+        return Err("throw already in progress".into());
+    }
 
     Ok(ControllerAction::Apply { player_id })
 }

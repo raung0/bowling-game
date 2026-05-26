@@ -396,7 +396,7 @@ impl INode for GameState {
         let controller_status = self.controller_status_text();
         let controller_force = self.controller_force;
         let controller_direction = self.controller_direction;
-        let controller_enabled = self.calibration_active || self.is_local_player_turn();
+        let controller_enabled = self.can_accept_controller_gameplay_input();
 
         let current_player_label = if self.current_player_id.is_empty() {
             "Current turn: waiting for player".to_string()
@@ -456,6 +456,22 @@ impl GameState {
             self.game_phase,
             GamePhase::AdvertiseResult { .. } | GamePhase::PlayReplay { .. }
         )
+    }
+
+    fn can_accept_controller_gameplay_input(&self) -> bool {
+        if self.calibration_active {
+            return true;
+        }
+
+        self.is_local_player_turn()
+            && matches!(
+                self.game_phase,
+                GamePhase::TakingShot {
+                    launched: false,
+                    waiting_report: false,
+                    ..
+                }
+            )
     }
 
     fn clear_controller_input_state(&mut self) {
@@ -1567,7 +1583,7 @@ impl GameState {
     }
 
     fn start_ball_setup_hold(&mut self, action: BallSetupAction) {
-        if !self.is_local_player_turn() {
+        if !self.can_accept_controller_gameplay_input() || self.calibration_active {
             return;
         }
 
@@ -2510,7 +2526,7 @@ impl GameState {
             return;
         }
         self.stop_ball_setup_hold();
-        if !(self.calibration_active || self.is_local_player_turn()) {
+        if !self.can_accept_controller_gameplay_input() {
             return;
         }
 
@@ -2568,7 +2584,7 @@ impl GameState {
         if self.consume_controller_input_for_replay() {
             return;
         }
-        if !(self.calibration_active || self.is_local_player_turn()) {
+        if !self.can_accept_controller_gameplay_input() || self.calibration_active {
             return;
         }
 
