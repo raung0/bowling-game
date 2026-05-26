@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const BALL_MOVE_Z_MIN: f32 = -0.45;
-pub const BALL_MOVE_Z_MAX: f32 = 0.45;
+pub const BALL_MOVE_Z_MIN: f32 = -0.5;
+pub const BALL_MOVE_Z_MAX: f32 = 0.5;
 pub const BALL_MOVE_Z_STEP: f32 = 0.03;
-pub const BALL_ROT_Y_MAX_DEG: f32 = 45.0;
-pub const BALL_ROT_Y_STEP_DEG: f32 = 2.5;
+pub const BALL_ROT_Y_MAX_DEG: f32 = 10.0;
+pub const BALL_ROT_Y_STEP_DEG: f32 = 0.25;
 pub const CONTROLLER_HOLD_REPEAT_DELAY_SECS: f32 = 0.25;
 pub const CONTROLLER_HOLD_REPEAT_INTERVAL_SECS: f32 = 0.08;
 

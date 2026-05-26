@@ -10,7 +10,7 @@ shader_parameter/albedo_color = Color(1, 0, 0, 1)
 
 [sub_resource type="QuadMesh" id="QuadMesh_r6fkt"]
 material = SubResource("ShaderMaterial_io42t")
-size = Vector2(0.2, 0.5)
+size = Vector2(0.1, 0.4)
 orientation = 1
 
 [sub_resource type="Curve" id="Curve_gpkt1"]

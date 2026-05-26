@@ -1,12 +1,15 @@
 use common::{
-    ClientMessage, PlayerInfo, ScoreboardState, ServerMessage, BALL_MOVE_Z_MAX, BALL_MOVE_Z_MIN,
-    BALL_MOVE_Z_STEP, BALL_ROT_Y_MAX_DEG, BALL_ROT_Y_STEP_DEG,
-    CONTROLLER_HOLD_REPEAT_DELAY_SECS, CONTROLLER_HOLD_REPEAT_INTERVAL_SECS,
+    BALL_MOVE_Z_MAX, BALL_MOVE_Z_MIN, BALL_MOVE_Z_STEP, BALL_ROT_Y_MAX_DEG, BALL_ROT_Y_STEP_DEG,
+    CONTROLLER_HOLD_REPEAT_DELAY_SECS, CONTROLLER_HOLD_REPEAT_INTERVAL_SECS, ClientMessage,
+    PlayerInfo, ScoreboardState, ServerMessage,
 };
 use getset::Getters;
 use godot::{
     classes::web_socket_peer::State as WebSocketState,
-    classes::{AudioStream, AudioStreamPlayer, Button, LineEdit, MeshInstance3D, Node, Node3D, PackedScene, RigidBody3D, WebSocketPeer},
+    classes::{
+        AudioStream, AudioStreamPlayer, Button, LineEdit, MeshInstance3D, Node, Node3D,
+        PackedScene, RigidBody3D, WebSocketPeer,
+    },
     global::Error,
     prelude::*,
 };
@@ -21,6 +24,7 @@ use crate::{controller, rendering, storage};
 const SOCKET_CONNECT_TIMEOUT_SECS: f64 = 5.0;
 const THROW_SETTLE_SECS: f64 = 3.0;
 const LEAVE_HOLD_SECS: f64 = 5.0;
+const DIRECTION_INDICATOR_FADE_SECS: f64 = 0.25;
 
 #[derive(Clone, Copy, Default)]
 pub enum Screen {
@@ -69,7 +73,9 @@ enum GamePhase {
         recording_started: bool,
     },
     Shot,
-    AdvertiseResult { announcement: String },
+    AdvertiseResult {
+        announcement: String,
+    },
     PlayReplay {
         announcement: String,
         camera_index: usize,
@@ -118,6 +124,8 @@ pub struct GameState {
     replay_cameras: Vec<ReplayCameraInfo>,
     replay_ball_ghost: Option<Gd<Node3D>>,
     replay_pin_ghosts: Vec<Gd<Node3D>>,
+    direction_indicator: Option<Gd<Node3D>>,
+    direction_indicator_fade_progress: f64,
     game_phase: GamePhase,
     leave_holding: bool,
     leave_hold_secs: f64,
@@ -164,6 +172,8 @@ impl INode for GameState {
             replay_cameras: Vec::new(),
             replay_ball_ghost: None,
             replay_pin_ghosts: Vec::new(),
+            direction_indicator: None,
+            direction_indicator_fade_progress: 0.0,
             game_phase: GamePhase::TakingShot {
                 launched: false,
                 waiting_report: false,
@@ -188,7 +198,10 @@ impl INode for GameState {
         self.pending_ball_respawn = true;
 
         if let Some(mut replay_audio) = self.try_replay_audio_player() {
-            replay_audio.connect("finished", &self.base().callable("on_replay_audio_finished"));
+            replay_audio.connect(
+                "finished",
+                &self.base().callable("on_replay_audio_finished"),
+            );
         } else {
             godot_warn!("ReplayAudioPlayer missing under GameManager; replay audio disabled");
         }
@@ -226,12 +239,12 @@ impl INode for GameState {
         let mut move_right_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Move/Right");
-        let mut rotate_left_button = self
-            .base()
-            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Rotate/Left");
-        let mut rotate_right_button = self
-            .base()
-            .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/Rotate/Right");
+        let mut rotate_left_button = self.base().get_node_as::<Button>(
+            "UiManager/Controller/MarginContainer/VBoxContainer/Rotate/Left",
+        );
+        let mut rotate_right_button = self.base().get_node_as::<Button>(
+            "UiManager/Controller/MarginContainer/VBoxContainer/Rotate/Right",
+        );
         let mut controller_back_button = self
             .base()
             .get_node_as::<Button>("UiManager/Controller/MarginContainer/VBoxContainer/BackToMenu");
@@ -256,13 +269,25 @@ impl INode for GameState {
         host_kick_button.connect("pressed", &self.base().callable("on_kick_pressed"));
         hold_button.connect("button_down", &self.base().callable("on_hold_button_down"));
         hold_button.connect("button_up", &self.base().callable("on_hold_button_up"));
-        move_left_button.connect("button_down", &self.base().callable("on_move_left_button_down"));
+        move_left_button.connect(
+            "button_down",
+            &self.base().callable("on_move_left_button_down"),
+        );
         move_left_button.connect("button_up", &self.base().callable("on_move_button_up"));
-        move_right_button.connect("button_down", &self.base().callable("on_move_right_button_down"));
+        move_right_button.connect(
+            "button_down",
+            &self.base().callable("on_move_right_button_down"),
+        );
         move_right_button.connect("button_up", &self.base().callable("on_move_button_up"));
-        rotate_left_button.connect("button_down", &self.base().callable("on_rotate_left_button_down"));
+        rotate_left_button.connect(
+            "button_down",
+            &self.base().callable("on_rotate_left_button_down"),
+        );
         rotate_left_button.connect("button_up", &self.base().callable("on_rotate_button_up"));
-        rotate_right_button.connect("button_down", &self.base().callable("on_rotate_right_button_down"));
+        rotate_right_button.connect(
+            "button_down",
+            &self.base().callable("on_rotate_right_button_down"),
+        );
         rotate_right_button.connect("button_up", &self.base().callable("on_rotate_button_up"));
         controller_back_button
             .connect("button_down", &self.base().callable("on_leave_button_down"));
@@ -283,6 +308,7 @@ impl INode for GameState {
 
         self.process_pending_ball_respawn();
         self.sync_zoomed_in_camera_z();
+        self.update_direction_indicator(delta);
         self.poll_socket();
         self.handle_socket_connect_timeout(delta);
         self.update_controller_strength();
@@ -400,6 +426,12 @@ impl GameState {
             .and_then(|node| node.try_cast::<Node3D>().ok())
     }
 
+    fn try_ball_end_point(&self) -> Option<Gd<Node3D>> {
+        self.base()
+            .get_node_or_null("GameManager/BallEndPoint")
+            .and_then(|node| node.try_cast::<Node3D>().ok())
+    }
+
     fn try_zoomed_in_camera(&self) -> Option<Gd<Node3D>> {
         self.base()
             .get_node_or_null("GameManager/PhantomCameraZoomedIn")
@@ -482,6 +514,92 @@ impl GameState {
         let mut camera_transform = camera.get_global_transform();
         camera_transform.origin.z = start_z;
         camera.set_global_transform(camera_transform);
+    }
+
+    fn ensure_direction_indicator(&mut self) -> Option<Gd<Node3D>> {
+        if let Some(indicator) = &self.direction_indicator {
+            return Some(indicator.clone());
+        }
+
+        let mut game_manager = self.try_game_manager_root()?;
+        let indicator_scene = load::<PackedScene>("res://Assets/DirectionIndicator.tscn");
+        let mut indicator = indicator_scene.instantiate_as::<Node3D>();
+        indicator.set_name("DirectionIndicator");
+        game_manager.add_child(&indicator);
+        self.direction_indicator = Some(indicator.clone());
+        Some(indicator)
+    }
+
+    fn clear_direction_indicator(&mut self) {
+        if let Some(mut indicator) = self.direction_indicator.take() {
+            indicator.queue_free();
+        }
+    }
+
+    fn update_direction_indicator(&mut self, delta: f64) {
+        let taking_aim = matches!(
+            self.game_phase,
+            GamePhase::TakingShot {
+                launched: false,
+                waiting_report: false,
+                ..
+            }
+        );
+
+        if !taking_aim {
+            self.direction_indicator_fade_progress = 0.0;
+            self.clear_direction_indicator();
+            return;
+        }
+
+        let Some(start) = self.try_ball_start_point() else {
+            self.clear_direction_indicator();
+            return;
+        };
+
+        let Some(end) = self.try_ball_end_point() else {
+            self.clear_direction_indicator();
+            return;
+        };
+
+        let Some(mut indicator) = self.ensure_direction_indicator() else {
+            return;
+        };
+
+        let start_transform = start.get_global_transform();
+        let mut start_point = start_transform.origin;
+        start_point.y = 0.05;
+
+        let forward = start_transform.basis * Vector3::RIGHT;
+        let target_x = end.get_global_position().x;
+        let travel = if forward.x.abs() > 0.0001 {
+            ((target_x - start_point.x) / forward.x).max(0.0)
+        } else {
+            0.0
+        } * 0.8;
+
+        start_point = start_point + forward;
+
+        let mut finish_point = start_point + (forward * travel);
+        finish_point.y = 0.05;
+
+        indicator.call(
+            "set_points",
+            &[start_point.to_variant(), finish_point.to_variant()],
+        );
+
+        if self.controller_holding {
+            self.direction_indicator_fade_progress = (self.direction_indicator_fade_progress
+                + (delta / DIRECTION_INDICATOR_FADE_SECS))
+                .clamp(0.0, 1.0);
+        } else {
+            self.direction_indicator_fade_progress = 0.0;
+        }
+
+        indicator.call(
+            "set_fade",
+            &[self.direction_indicator_fade_progress.to_variant()],
+        );
     }
 
     fn push_ball_setup_log(&self, player_id: &str, move_z_delta: f32, rotate_y_delta_deg: f32) {
@@ -874,7 +992,9 @@ impl GameState {
         let Some(marker) = self.try_replay_start_marker() else {
             if !self.replay_recording_missing_marker_warned {
                 self.replay_recording_missing_marker_warned = true;
-                godot_warn!("ReplayStartMarker missing under GameManager; replay capture disabled for this shot");
+                godot_warn!(
+                    "ReplayStartMarker missing under GameManager; replay capture disabled for this shot"
+                );
             }
             return;
         };
@@ -887,18 +1007,25 @@ impl GameState {
 
         if !recording_started {
             if ball_x <= marker_x {
-                godot_print!("replay not started yet: ball_x={}, marker_x={}", ball_x, marker_x);
+                godot_print!(
+                    "replay not started yet: ball_x={}, marker_x={}",
+                    ball_x,
+                    marker_x
+                );
                 should_capture = false;
             } else {
                 if let GamePhase::TakingShot {
-                    recording_started,
-                    ..
+                    recording_started, ..
                 } = &mut self.game_phase
                 {
                     *recording_started = true;
                 }
                 self.replay_samples.clear();
-                godot_print!("start recording replay samples: ball_x={}, marker_x={}", ball_x, marker_x);
+                godot_print!(
+                    "start recording replay samples: ball_x={}, marker_x={}",
+                    ball_x,
+                    marker_x
+                );
             }
         }
 
@@ -963,7 +1090,11 @@ impl GameState {
                 "replay camera {}: {} ({})",
                 index,
                 camera.name,
-                if camera.half_speed { "half speed" } else { "normal speed" }
+                if camera.half_speed {
+                    "half speed"
+                } else {
+                    "normal speed"
+                }
             );
         }
         self.set_replay_subjects_frozen(true);
@@ -985,7 +1116,12 @@ impl GameState {
                 camera_index,
                 frame_index,
                 frame_hold,
-            } => (announcement.clone(), *camera_index, *frame_index, *frame_hold),
+            } => (
+                announcement.clone(),
+                *camera_index,
+                *frame_index,
+                *frame_hold,
+            ),
             _ => return,
         };
 
@@ -1258,7 +1394,10 @@ impl GameState {
                 standing_pins: standing,
             });
 
-            godot_print!("stop recording replay samples: {} frames", self.replay_samples.len());
+            godot_print!(
+                "stop recording replay samples: {} frames",
+                self.replay_samples.len()
+            );
 
             self.game_phase = GamePhase::Shot;
 
@@ -1602,7 +1741,10 @@ impl GameState {
                     self.push_ball_setup_log(&player_id, move_z_delta, rotate_y_delta_deg);
                 }
             }
-            ServerMessage::ToggleZoom { player_id, zoomed_in } => {
+            ServerMessage::ToggleZoom {
+                player_id,
+                zoomed_in,
+            } => {
                 if self.is_host() {
                     self.set_zoomed_in(zoomed_in);
                     godot_print!("zoom toggle from {}: {}", player_id, zoomed_in);

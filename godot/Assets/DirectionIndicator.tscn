@@ -5,5 +5,7 @@
 
 [node name="DirectionIndicator" type="Node3D" unique_id=487056961 node_paths=PackedStringArray("path")]
 script = ExtResource("1_7unn1")
-path = NodePath("")
+path = NodePath("Path3D")
 indicator_scene = ExtResource("2_io42t")
+
+[node name="Path3D" type="Path3D" parent="."]

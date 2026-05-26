@@ -2,22 +2,37 @@
 
 [ext_resource type="PackedScene" uid="uid://dg7dj2q42dqak" path="res://Assets/bowling_lane.tscn" id="1_wbfu4"]
 [ext_resource type="PackedScene" uid="uid://domarjvmu8sst" path="res://Assets/AllPins.tscn" id="1_xkndl"]
-[ext_resource type="PackedScene" uid="uid://cmutt0kwfd6p6" path="res://Assets/DirectionIndicator.tscn" id="2_2vekm"]
 [ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="3_sb48q"]
 [ext_resource type="Script" uid="uid://b8hhnqsugykly" path="res://addons/phantom_camera/scripts/resources/camera_3d_resource.gd" id="4_3mrqo"]
 [ext_resource type="PackedScene" uid="uid://c4lxwj7yridtd" path="res://Assets/bowling_ball.tscn" id="4_sb48q"]
 [ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="5_r0x5m"]
+[ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="6_3mrqo"]
 [ext_resource type="AudioStream" uid="uid://c8ocsrlr8o3eq" path="res://Assets/replay_beep.wav" id="6_replay_beep"]
 [ext_resource type="Texture2D" uid="uid://bluaktmbqggnb" path="res://Assets/galaxy_hdri.png" id="8_joorw"]
+
+[sub_resource type="Resource" id="Resource_yhmtn"]
+script = ExtResource("6_3mrqo")
 
 [sub_resource type="Resource" id="Resource_2vekm"]
 script = ExtResource("4_3mrqo")
 metadata/_custom_type_script = "uid://b8hhnqsugykly"
 
+[sub_resource type="Resource" id="Resource_gwjdr"]
+script = ExtResource("6_3mrqo")
+
 [sub_resource type="Resource" id="Resource_yx171"]
 script = ExtResource("4_3mrqo")
 fov = 25.6
 metadata/_custom_type_script = "uid://b8hhnqsugykly"
+
+[sub_resource type="Resource" id="Resource_lvtmh"]
+script = ExtResource("6_3mrqo")
+
+[sub_resource type="Resource" id="Resource_yyih5"]
+script = ExtResource("6_3mrqo")
+
+[sub_resource type="Resource" id="Resource_qjyg3"]
+script = ExtResource("6_3mrqo")
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_2vekm"]
 panorama = ExtResource("8_joorw")
@@ -34,8 +49,6 @@ glow_enabled = true
 spawn_position = NodePath("PinsSpawnPoint")
 all_pins_scene = ExtResource("1_xkndl")
 
-[node name="DirectionIndicator" parent="." unique_id=487056961 instance=ExtResource("2_2vekm")]
-
 [node name="PhantomCameraNormal" type="Node3D" parent="." unique_id=64845123 node_paths=PackedStringArray("follow_target", "look_at_target")]
 transform = Transform3D(5.9708185e-08, 0.53818893, -0.84282285, -2.9854093e-08, 0.842824, 0.53818816, 1.0017371, -2.9802315e-08, 5.960455e-08, -0.83, 0.7229853, 0)
 top_level = true
@@ -45,6 +58,7 @@ follow_mode = 2
 follow_target = NodePath("../BowlingBall")
 look_at_mode = 2
 look_at_target = NodePath("../BowlingBall")
+tween_resource = SubResource("Resource_yhmtn")
 tween_on_load = false
 camera_3d_resource = SubResource("Resource_2vekm")
 follow_offset = Vector3(-0.83, 0.53, 0)
@@ -87,6 +101,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.19298536, 0)
 [node name="PhantomCameraZoomedIn" type="Node3D" parent="." unique_id=1337760010]
 transform = Transform3D(-4.334595e-08, 0.13201421, -0.99124795, -5.6404255e-09, 0.99124795, 0.13201421, 1, 1.131334e-08, -4.222196e-08, -0.80457175, 1.2302979, 0)
 script = ExtResource("5_r0x5m")
+tween_resource = SubResource("Resource_gwjdr")
 tween_on_load = false
 camera_3d_resource = SubResource("Resource_yx171")
 metadata/_custom_type_script = "uid://csjccrhj5wnx7"
@@ -96,18 +111,21 @@ metadata/_custom_type_script = "uid://csjccrhj5wnx7"
 [node name="PhantomCamera3D" type="Node3D" parent="ReplayCameras" unique_id=87174494]
 transform = Transform3D(-4.2422187e-08, -0.24107505, 0.9705065, -1.0537725e-08, 0.9705065, 0.24107505, -1, 0, -4.371139e-08, 10.133951, 0.80621636, 0)
 script = ExtResource("5_r0x5m")
+tween_resource = SubResource("Resource_lvtmh")
 tween_on_load = false
 metadata/_custom_type_script = "uid://csjccrhj5wnx7"
 
 [node name="PhantomCamera3D2" type="Node3D" parent="ReplayCameras" unique_id=1971809904]
 transform = Transform3D(0.85861117, 0.1753289, -0.4817122, 0, 0.93969274, 0.34202015, 0.5126275, -0.29366234, 0.8068307, 8.428718, 0.612141, 0.6648015)
 script = ExtResource("5_r0x5m")
+tween_resource = SubResource("Resource_yyih5")
 tween_on_load = false
 metadata/_custom_type_script = "uid://csjccrhj5wnx7"
 
 [node name="PhantomCamera3D3Slow" type="Node3D" parent="ReplayCameras" unique_id=762322346]
 transform = Transform3D(-4.2422187e-08, -0.24107505, 0.9705065, -1.0537725e-08, 0.9705065, 0.24107505, -1, 0, -4.371139e-08, 10.133951, 0.80621636, 0)
 script = ExtResource("5_r0x5m")
+tween_resource = SubResource("Resource_qjyg3")
 tween_on_load = false
 metadata/_custom_type_script = "uid://csjccrhj5wnx7"
 
